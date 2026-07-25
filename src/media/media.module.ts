@@ -7,6 +7,7 @@ import { MediaAccessService } from './media-access.service';
 import { MediaController } from './media.controller';
 import { MediaDownloadProcessor } from './media-download.processor';
 import { MediaDownloadService } from './media-download.service';
+import { MediaSweepService } from './media-sweep.service';
 import { MEDIA_STORAGE, NoopMediaStorage } from './media-storage';
 import { OutboundMediaService } from './outbound-media.service';
 import { R2MediaStorage } from './r2-media-storage';
@@ -17,6 +18,7 @@ import { R2MediaStorage } from './r2-media-storage';
   providers: [
     MediaDownloadService,
     MediaDownloadProcessor,
+    MediaSweepService,
     MediaAccessService,
     OutboundMediaService,
     {
@@ -39,7 +41,7 @@ import { R2MediaStorage } from './r2-media-storage';
       },
     },
   ],
-  exports: [MEDIA_STORAGE],
+  exports: [MEDIA_STORAGE, MediaSweepService],
 })
 export class MediaModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

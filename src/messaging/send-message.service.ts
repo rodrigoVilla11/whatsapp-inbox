@@ -1,5 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Contact, Conversation, Message, WhatsappAccount } from '@prisma/client';
+import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphApiClient, GraphApiError } from '../whatsapp/graph-api.client';
 import {
@@ -79,6 +80,8 @@ export class SendMessageService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly graph: GraphApiClient,
+    @Inject(DOMAIN_EVENT_PUBLISHER)
+    private readonly events: DomainEventPublisher,
   ) {}
 
   async send(
@@ -214,6 +217,30 @@ export class SendMessageService {
       this.logger.warn(
         `Envío fallido (${mapped.domainCode}) conv=${conversation.id} meta=${mapped.metaCode}`,
       );
+
+      // Eventos: el mensaje FAILED existe y otros agentes mirando el hilo
+      // deben verlo; y si hubo rebobinado de ventana, la UI tiene que caer
+      // a modo plantilla AL INSTANTE.
+      if (failed) {
+        await this.events.publish({
+          tenantId,
+          type: 'message.created',
+          payload: { conversationId: conversation.id, message: failed },
+        });
+      }
+      if (mapped.metaCode === META_ERROR_WINDOW_EXPIRED) {
+        const freshConversation = await db.conversation.findFirst({
+          where: { id: conversation.id, tenantId },
+        });
+        if (freshConversation) {
+          await this.events.publish({
+            tenantId,
+            type: 'conversation.updated',
+            payload: { conversation: freshConversation },
+          });
+        }
+      }
+
       return {
         httpStatus: mapped.httpStatus,
         message: failed,
@@ -248,6 +275,25 @@ export class SendMessageService {
     });
 
     const sent = await db.message.findFirst({ where: { id: message.id, tenantId } });
+
+    if (sent) {
+      await this.events.publish({
+        tenantId,
+        type: 'message.created',
+        payload: { conversationId: conversation.id, message: sent },
+      });
+    }
+    const freshConversation = await db.conversation.findFirst({
+      where: { id: conversation.id, tenantId },
+    });
+    if (freshConversation) {
+      await this.events.publish({
+        tenantId,
+        type: 'conversation.updated',
+        payload: { conversation: freshConversation },
+      });
+    }
+
     return { httpStatus: 201, message: sent, error: null };
   }
 

@@ -1,41 +1,27 @@
 import { Injectable, NestMiddleware, ServiceUnavailableException } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
-import { PrismaService } from '../prisma/prisma.service';
+import { TenantContext, TenantContextService } from './tenant-context.service';
 
-export interface TenantContext {
-  tenantId: string;
-  userId: string | null;
-}
+export type { TenantContext } from './tenant-context.service';
 
 /**
- * TODO(auth): PROVISORIO hasta montar auth real (sesión/JWT por tenant).
- *
- * Fija el contexto al tenant del seed (DEFAULT_TENANT_SLUG, default
- * nova-sushi) y a su usuario OWNER como sentByUserId. Cuando exista auth,
- * este middleware se reemplaza por el que saque tenantId/userId de la
- * sesión — el resto del código ya consume TenantContext y no cambia.
+ * TODO(auth): PROVISORIO — fija el contexto vía TenantContextService (tenant
+ * del seed + OWNER). Cuando exista auth real, este middleware pasa a sacar
+ * tenantId/userId de la sesión; el resto del código ya consume TenantContext
+ * y no cambia.
  */
 @Injectable()
 export class TenantContextMiddleware implements NestMiddleware {
-  private cached: TenantContext | null = null;
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly tenantContext: TenantContextService) {}
 
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
-    if (!this.cached) {
-      const slug = process.env.DEFAULT_TENANT_SLUG ?? 'nova-sushi';
-      const tenant = await this.prisma.db.tenant.findUnique({ where: { slug } });
-      if (!tenant) {
-        throw new ServiceUnavailableException(
-          `Tenant "${slug}" no existe — ¿corriste npm run db:seed?`,
-        );
-      }
-      const owner = await this.prisma.db.user.findFirst({
-        where: { tenantId: tenant.id, role: 'OWNER', isActive: true },
-      });
-      this.cached = { tenantId: tenant.id, userId: owner?.id ?? null };
+    const context = await this.tenantContext.resolveDefault();
+    if (!context) {
+      throw new ServiceUnavailableException(
+        'Tenant por defecto no existe — ¿corriste npm run db:seed?',
+      );
     }
-    (req as Request & { tenantContext: TenantContext }).tenantContext = this.cached;
+    (req as Request & { tenantContext: TenantContext }).tenantContext = context;
     next();
   }
 }

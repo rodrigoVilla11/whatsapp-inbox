@@ -11,11 +11,12 @@ const NOW_OPEN = new Date(); // lastInboundAt reciente → ventana abierta
 
 let db: FakeDb;
 let graph: { sendMessage: ReturnType<typeof vi.fn>; listTemplates: ReturnType<typeof vi.fn> };
+let events: { publish: ReturnType<typeof vi.fn> };
 let service: SendMessageService;
 
 function makeService(): SendMessageService {
   const prisma = { db } as unknown as PrismaService;
-  const svc = new SendMessageService(prisma, graph as unknown as GraphApiClient);
+  const svc = new SendMessageService(prisma, graph as unknown as GraphApiClient, events);
   (svc as unknown as { rateLimitBackoffMs: number }).rateLimitBackoffMs = 1; // sin esperas reales
   return svc;
 }
@@ -68,6 +69,7 @@ beforeAll(() => {
 beforeEach(() => {
   db = createFakeDb();
   graph = { sendMessage: vi.fn(), listTemplates: vi.fn() };
+  events = { publish: vi.fn().mockResolvedValue(undefined) };
   service = makeService();
   graph.sendMessage.mockResolvedValue({ wamid: 'wamid.NEW.1' });
 });
@@ -100,6 +102,10 @@ describe('SendMessageService — texto', () => {
     const conv = db.conversation.rows[0];
     expect(conv.lastOutboundAt).toBeInstanceOf(Date);
     expect(conv.lastMessagePreview).toBe('llegamos en 10 minutos');
+
+    // eventos post-éxito: message.created + conversation.updated
+    const types = events.publish.mock.calls.map((c) => c[0].type);
+    expect(types).toEqual(['message.created', 'conversation.updated']);
   });
 
   it('ventana cerrada → 422 WINDOW_EXPIRED sin llamar a Meta ni persistir', async () => {
@@ -148,6 +154,15 @@ describe('SendMessageService — mapeo de errores de Meta', () => {
     const conv = db.conversation.rows[0] as { lastInboundAt: Date };
     const { isWindowOpen } = await import('../src/messaging/window');
     expect(isWindowOpen(conv)).toBe(false);
+
+    // y la UI se entera AL INSTANTE: conversation.updated con la ventana caída
+    const convEvent = events.publish.mock.calls.find(
+      (c) => c[0].type === 'conversation.updated',
+    )?.[0];
+    expect(convEvent).toBeTruthy();
+    expect(isWindowOpen(convEvent.payload.conversation)).toBe(false);
+    // más el message.created del FAILED para otros agentes mirando el hilo
+    expect(events.publish.mock.calls.some((c) => c[0].type === 'message.created')).toBe(true);
   });
 
   it('131047 NO rebobina si un entrante fresco llegó durante el intento (CAS)', async () => {

@@ -16,13 +16,14 @@ const TS_MS = TS * 1000;
 let db: FakeDb;
 let handler: WebhookEventHandler;
 let mediaQueue: { add: ReturnType<typeof vi.fn> };
+let events: { publish: ReturnType<typeof vi.fn> };
 
 function makeHandler(fake: FakeDb): WebhookEventHandler {
   const prisma = { db: fake } as unknown as PrismaService;
   return new WebhookEventHandler(
     prisma,
-    new InboundMessagesService(prisma, mediaQueue as unknown as Queue),
-    new MessageStatusesService(prisma),
+    new InboundMessagesService(prisma, mediaQueue as unknown as Queue, events),
+    new MessageStatusesService(prisma, events),
   );
 }
 
@@ -79,6 +80,7 @@ beforeAll(() => {
 beforeEach(() => {
   db = createFakeDb();
   mediaQueue = { add: vi.fn().mockResolvedValue({}) };
+  events = { publish: vi.fn().mockResolvedValue(undefined) };
   handler = makeHandler(db);
   seedAccount();
 });
@@ -123,6 +125,26 @@ describe('WebhookEventHandler — mensajes entrantes', () => {
       phoneNumberId: PNID,
     });
     expect(event.processedAt).toBeInstanceOf(Date);
+  });
+
+  it('entrante nuevo → publica message.created y conversation.updated POST-commit', async () => {
+    await handler.handle(
+      seedEvent(payloadOf(change({ contacts: CONTACTS, messages: [textMessage()] }))),
+    );
+
+    const types = events.publish.mock.calls.map((c) => c[0].type);
+    expect(types).toContain('message.created');
+    expect(types).toContain('conversation.updated');
+    const created = events.publish.mock.calls.find((c) => c[0].type === 'message.created')![0];
+    expect(created.tenantId).toBe(TENANT);
+    expect(created.payload.message.wamid).toBe('wamid.IN.1');
+
+    // duplicado (reintento de Meta) → NO se re-emite
+    events.publish.mockClear();
+    await handler.handle(
+      seedEvent(payloadOf(change({ contacts: CONTACTS, messages: [textMessage()] }))),
+    );
+    expect(events.publish).not.toHaveBeenCalled();
   });
 
   it('mismo wamid dos veces (reintento de Meta) → sin duplicados y unreadCount sigue en 1', async () => {
@@ -351,6 +373,19 @@ describe('WebhookEventHandler — statuses', () => {
     await handler.handle(seedEvent(payloadOf(change({ statuses: [statusOf('delivered')] }))));
     const conv = db.conversation.rows.find((c) => c.id === 'conv_out')!;
     expect((conv.lastOutboundAt as Date).getTime()).toBe(TS_MS); // timestamp del mensaje
+  });
+
+  it('status aplicado → publica message.updated con los campos del tilde', async () => {
+    seedOutbound();
+    await handler.handle(seedEvent(payloadOf(change({ statuses: [statusOf('read')] }))));
+
+    const updated = events.publish.mock.calls.find((c) => c[0].type === 'message.updated')?.[0];
+    expect(updated).toBeTruthy();
+    expect(updated.payload).toMatchObject({
+      id: 'msg_out',
+      conversationId: 'conv_out',
+      changes: { status: 'READ' },
+    });
   });
 
   it('status de un wamid desconocido → no explota y el evento queda PROCESSED', async () => {

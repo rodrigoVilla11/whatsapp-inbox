@@ -36,7 +36,8 @@ beforeEach(() => {
     uploadMedia: vi.fn().mockResolvedValue('meta-media-99'),
   };
   const prisma = { db } as unknown as PrismaService;
-  const send = new SendMessageService(prisma, graph as unknown as GraphApiClient);
+  const events = { publish: vi.fn().mockResolvedValue(undefined) };
+  const send = new SendMessageService(prisma, graph as unknown as GraphApiClient, events);
   outbound = new OutboundMediaService(prisma, graph as unknown as GraphApiClient, send, storage);
   access = new MediaAccessService(prisma, configStub, storage);
 

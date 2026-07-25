@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import type { MediaDownloadJob } from '../queue/queue.constants';
 import { GraphApiClient } from '../whatsapp/graph-api.client';
@@ -31,6 +32,8 @@ export class MediaDownloadService {
     private readonly prisma: PrismaService,
     private readonly graph: GraphApiClient,
     @Inject(MEDIA_STORAGE) private readonly storage: MediaStorage,
+    @Inject(DOMAIN_EVENT_PUBLISHER)
+    private readonly events: DomainEventPublisher,
   ) {}
 
   async download({ tenantId, messageId }: MediaDownloadJob): Promise<MediaDownloadOutcome> {
@@ -119,6 +122,21 @@ export class MediaDownloadService {
       },
     });
     this.logger.log(`media-download OK: ${key} (${buffer.length} bytes)`);
+
+    // La UI puede pasar de "descargando…" al media real.
+    await this.events.publish({
+      tenantId,
+      type: 'message.updated',
+      payload: {
+        id: message.id,
+        conversationId: message.conversationId,
+        changes: {
+          mediaStatus: 'DOWNLOADED',
+          mediaMimeType: mimeType,
+          mediaSizeBytes: buffer.length,
+        },
+      },
+    });
     return 'downloaded';
   }
 
@@ -134,5 +152,18 @@ export class MediaDownloadService {
       where: { id: messageId, tenantId, errorDetail: null },
       data: { errorDetail: `media: ${reason}` },
     });
+
+    const failed = await db.message.findFirst({ where: { id: messageId, tenantId } });
+    if (failed?.mediaStatus === 'FAILED') {
+      await this.events.publish({
+        tenantId,
+        type: 'message.updated',
+        payload: {
+          id: failed.id,
+          conversationId: failed.conversationId,
+          changes: { mediaStatus: 'FAILED' },
+        },
+      });
+    }
   }
 }

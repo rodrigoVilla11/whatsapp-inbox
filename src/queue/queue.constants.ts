@@ -27,3 +27,11 @@ export const PURGE_WEBHOOK_EVENTS_JOB = 'purge-webhook-events';
 
 /** Cron del job de purga: todos los días a las 04:00 (hora del server). */
 export const PURGE_WEBHOOK_EVENTS_CRON = '0 4 * * *';
+
+/**
+ * Barrido de media huérfana: rescata mensajes que quedaron PENDING sin job
+ * (proceso muerto entre el commit y el queue.add, o evento failed perdido).
+ */
+export const ORPHAN_MEDIA_SWEEP_JOB = 'rescue-orphan-media';
+export const ORPHAN_MEDIA_SWEEP_EVERY_MS = 15 * 60 * 1000; // cada 15 min
+export const ORPHAN_MEDIA_MIN_AGE_MS = 30 * 60 * 1000; // PENDING de más de 30 min

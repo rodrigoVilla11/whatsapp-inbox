@@ -3,6 +3,8 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import {
   MAINTENANCE_QUEUE,
+  ORPHAN_MEDIA_SWEEP_EVERY_MS,
+  ORPHAN_MEDIA_SWEEP_JOB,
   PURGE_WEBHOOK_EVENTS_CRON,
   PURGE_WEBHOOK_EVENTS_JOB,
 } from '../queue/queue.constants';
@@ -28,8 +30,14 @@ export class MaintenanceScheduler implements OnApplicationBootstrap {
       { pattern: PURGE_WEBHOOK_EVENTS_CRON },
       { name: PURGE_WEBHOOK_EVENTS_JOB },
     );
+    await this.queue.upsertJobScheduler(
+      ORPHAN_MEDIA_SWEEP_JOB,
+      { every: ORPHAN_MEDIA_SWEEP_EVERY_MS },
+      { name: ORPHAN_MEDIA_SWEEP_JOB },
+    );
     this.logger.log(
-      `Purga de WebhookEvent programada (cron "${PURGE_WEBHOOK_EVENTS_CRON}")`,
+      `Mantenimiento programado: purga WebhookEvent (cron "${PURGE_WEBHOOK_EVENTS_CRON}") ` +
+        `+ barrido de media huérfana (cada ${ORPHAN_MEDIA_SWEEP_EVERY_MS / 60000} min)`,
     );
   }
 }

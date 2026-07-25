@@ -234,6 +234,45 @@ respuesta siempre `{ message, error }`; la UI decide por `error.code`
   reusa) + envío por `SendMessageService` (mismo dedup/errores). El Message
   saliente nace `DOWNLOADED` (ya lo tenemos nosotros).
 
+### Tiempo real (fase 6)
+
+Regla central: **los servicios de dominio no hablan con el gateway**.
+Publican al canal global `domain-events` de Redis (sobre
+`{ tenantId, type, payload, occurredAt }` — canal único con tenantId en el
+sobre, elegido sobre canal-por-tenant para no gestionar suscripciones
+dinámicas) y `InboxGateway` (suscripto una vez) reenvía al room
+`tenant:{tenantId}`. Con el worker en otro contenedor o N réplicas de la
+API, esto ya funciona: separar procesos es deploy, no código.
+
+- **Publicación post-commit** (mismo motivo que el encolado de media: un
+  evento de una tx rollbackeada es una mentira en pantalla) y
+  **best-effort**: si Redis falla se loguea y se sigue — la fuente de
+  verdad es REST.
+- **Gateway** (`src/events/inbox.gateway.ts`): namespace `/inbox`, auth de
+  handshake por `TenantContextService` (mismo provisional que REST,
+  TODO(auth)); sin tenant resoluble → desconexión inmediata. El tenant sale
+  SIEMPRE de la resolución server-side — socket.io no permite joins desde
+  el cliente y el gateway no expone ninguno.
+- **Contrato de reconexión (fase 7)**: sin replay ni acks. Al reconectar,
+  el frontend refetchea por REST (lista + hilo abierto) y recién después
+  confía en el stream.
+- **Eventos** (tipos y payloads en `src/events/domain-events.ts`):
+  `message.created` (worker entrante + envío, incluso FAILED),
+  `message.updated` (statuses del worker y media DOWNLOADED/FAILED —
+  `changes` parcial para mergear), `conversation.updated` (contadores,
+  preview, reapertura, y el rebobinado de ventana del 131047 — la UI cae a
+  modo plantilla al instante).
+
+### Barrido de media huérfana
+
+El encolado post-commit deja un caso recuperable: proceso muerto entre el
+commit y el `queue.add` → mensaje `PENDING` sin job. Job repeatable cada
+15 min (`rescue-orphan-media`): re-encola los `PENDING` de más de 30 min,
+iterando por tenant (el guard exige tenantId también acá). El job de
+descarga es idempotente → un falso positivo no duplica. `jobId` distinto
+del original (`media-sweep-*`): un job FAILED retenido en Redis no
+bloquearía el rescate por dedup de jobId.
+
 ### Graph API version
 
 Constante `GRAPH_API_VERSION` en `src/whatsapp/graph-api.constants.ts`,
@@ -311,5 +350,5 @@ docker/postgres/init/      # rol app_user (no superuser) + DB
    idempotencia por wamid, statuses + pricing, job de purga
 4. ✅ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
 5. ✅ Media entrante → R2 + saliente multipart (+ `R2MediaStorage` para retención)
-6. ⬜ Gateway WebSocket
+6. ✅ Gateway WebSocket (Redis pub/sub, rooms por tenant) + barrido de media huérfana
 7. ⬜ Frontend Next.js (3 columnas, tablet-first)

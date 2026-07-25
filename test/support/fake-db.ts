@@ -202,6 +202,8 @@ export class FakeModel {
 }
 
 export interface FakeDb {
+  tenant: FakeModel;
+  metaApp: FakeModel;
   whatsappAccount: FakeModel;
   webhookEvent: FakeModel;
   contact: FakeModel;
@@ -213,6 +215,8 @@ export interface FakeDb {
 
 export function createFakeDb(): FakeDb {
   const db: FakeDb = {
+    tenant: new FakeModel('ten', { status: 'ACTIVE' }, [['slug']]),
+    metaApp: new FakeModel('app', { graphVersion: null }, [['ref'], ['appId']]),
     whatsappAccount: new FakeModel('acc', {}, [['phoneNumberId']]),
     webhookEvent: new FakeModel('evt', {
       tenantId: null,

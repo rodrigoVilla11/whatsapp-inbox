@@ -1,7 +1,8 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma, WhatsappAccount } from '@prisma/client';
 import { Queue } from 'bullmq';
+import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   MEDIA_DOWNLOAD_JOB,
@@ -39,6 +40,8 @@ export class InboundMessagesService {
     private readonly prisma: PrismaService,
     @InjectQueue(MEDIA_DOWNLOAD_QUEUE)
     private readonly mediaQueue: Queue<MediaDownloadJob>,
+    @Inject(DOMAIN_EVENT_PUBLISHER)
+    private readonly events: DomainEventPublisher,
   ) {}
 
   async processMessage(
@@ -173,18 +176,41 @@ export class InboundMessagesService {
         });
       }
 
-      return { messageId: createdMessage.id as string, hasMedia: mapped.hasMedia };
+      return { message: createdMessage, hasMedia: mapped.hasMedia };
     });
+
+    if (!created) return; // duplicado: nada que encolar ni emitir
 
     // Encolado de la descarga TRAS el commit, nunca adentro de la tx: si
     // el worker de media corre antes del commit no vería el mensaje, y si
     // la tx rollbackea no debe quedar un job huérfano.
-    if (created?.hasMedia) {
+    const messageId = created.message.id as string;
+    if (created.hasMedia) {
       await this.mediaQueue.add(
         MEDIA_DOWNLOAD_JOB,
-        { tenantId, messageId: created.messageId },
-        { jobId: `media-${created.messageId}` },
+        { tenantId, messageId },
+        { jobId: `media-${messageId}` },
       );
+    }
+
+    // Eventos también post-commit y por el mismo motivo: un evento de una
+    // transacción rollbackeada es una mentira en la pantalla. El publish es
+    // best-effort (traga errores adentro) — la fuente de verdad es REST.
+    const conversationId = created.message.conversationId as string;
+    await this.events.publish({
+      tenantId,
+      type: 'message.created',
+      payload: { conversationId, message: created.message },
+    });
+    const freshConversation = await this.prisma.db.conversation.findFirst({
+      where: { id: conversationId, tenantId },
+    });
+    if (freshConversation) {
+      await this.events.publish({
+        tenantId,
+        type: 'conversation.updated',
+        payload: { conversation: freshConversation },
+      });
     }
   }
 }

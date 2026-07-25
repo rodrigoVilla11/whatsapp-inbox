@@ -16,6 +16,7 @@ const SHA_HEX = createHash('sha256').update(BODY).digest('hex');
 let db: FakeDb;
 let storage: FakeMediaStorage;
 let graph: { getMediaInfo: ReturnType<typeof vi.fn>; downloadMediaBinary: ReturnType<typeof vi.fn> };
+let events: { publish: ReturnType<typeof vi.fn> };
 let service: MediaDownloadService;
 
 beforeAll(() => Logger.overrideLogger(false));
@@ -24,10 +25,12 @@ beforeEach(() => {
   db = createFakeDb();
   storage = new FakeMediaStorage();
   graph = { getMediaInfo: vi.fn(), downloadMediaBinary: vi.fn() };
+  events = { publish: vi.fn().mockResolvedValue(undefined) };
   service = new MediaDownloadService(
     { db } as unknown as PrismaService,
     graph as unknown as GraphApiClient,
     storage,
+    events,
   );
   db.whatsappAccount.seed({ id: 'acc_1', tenantId: TENANT, phoneNumberId: 'PN_1', accessTokenEnc: 'v1.1.x' });
   db.message.seed({
@@ -126,5 +129,37 @@ describe('MediaDownloadService', () => {
     await service.download(JOB);
     await service.markFailed(JOB, 'reintento tardío perdido');
     expect(db.message.rows[0].mediaStatus).toBe('DOWNLOADED');
+  });
+
+  it('DOWNLOADED → publica message.updated con mediaStatus (y FAILED también)', async () => {
+    await service.download(JOB);
+    const downloaded = events.publish.mock.calls.find((c) => c[0].type === 'message.updated')![0];
+    expect(downloaded.tenantId).toBe(TENANT);
+    expect(downloaded.payload).toMatchObject({
+      id: 'msg_1',
+      conversationId: 'conv_1',
+      changes: { mediaStatus: 'DOWNLOADED', mediaMimeType: 'image/jpeg' },
+    });
+
+    // FAILED emite lo suyo (mensaje nuevo, marcado terminal)
+    events.publish.mockClear();
+    db.message.seed({
+      id: 'msg_2',
+      tenantId: TENANT,
+      conversationId: 'conv_1',
+      whatsappAccountId: 'acc_1',
+      direction: 'INBOUND',
+      type: 'IMAGE',
+      mediaId: 'meta_x',
+      mediaStatus: 'PENDING',
+      timestamp: new Date(),
+    });
+    await service.markFailed({ tenantId: TENANT, messageId: 'msg_2' }, 'agotado');
+    expect(events.publish.mock.calls[0][0].payload.changes).toEqual({ mediaStatus: 'FAILED' });
+
+    // pero un markFailed sobre DOWNLOADED no emite nada
+    events.publish.mockClear();
+    await service.markFailed(JOB, 'tardío');
+    expect(events.publish).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { MessageStatus, WhatsappAccount } from '@prisma/client';
+import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseEpochSeconds } from './message-mapping';
 import type { MetaPricing, MetaStatus } from './meta-webhook.types';
@@ -49,7 +50,11 @@ function pricingToUpdate(pricing: MetaPricing): Record<string, unknown> {
 export class MessageStatusesService {
   private readonly logger = new Logger(MessageStatusesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(DOMAIN_EVENT_PUBLISHER)
+    private readonly events: DomainEventPublisher,
+  ) {}
 
   async apply(account: WhatsappAccount, status: MetaStatus): Promise<void> {
     const wamid = status.id;
@@ -131,6 +136,30 @@ export class MessageStatusesService {
         },
         data: { lastOutboundAt: message.timestamp },
       });
+    }
+
+    // Evento para la UI: el estado del tilde cambió (pricing no se emite).
+    if (metaStatus === 'failed' || ADVANCE_FROM[metaStatus]) {
+      const updated = await db.message.findFirst({ where: { id: message.id, tenantId } });
+      if (updated) {
+        await this.events.publish({
+          tenantId,
+          type: 'message.updated',
+          payload: {
+            id: updated.id,
+            conversationId: updated.conversationId,
+            changes: {
+              status: updated.status,
+              deliveredAt: updated.deliveredAt,
+              readAt: updated.readAt,
+              failedAt: updated.failedAt,
+              errorCode: updated.errorCode,
+              errorTitle: updated.errorTitle,
+              errorDetail: updated.errorDetail,
+            },
+          },
+        });
+      }
     }
   }
 }
