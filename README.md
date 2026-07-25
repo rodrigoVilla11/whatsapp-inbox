@@ -82,8 +82,7 @@ El `PrismaClient` crudo es privado del servicio: no hay camino sin guard.
   fase 5 se registra la implementación R2 sin tocar el servicio.
 - `purgeWebhookEvents()`: poda `PROCESSED`/`DISCARDED` más viejos que
   `WEBHOOK_RETENTION_DAYS` (default 60). `FAILED` se conserva hasta
-  revisión manual. **Pendiente fase 3**: engancharlo como job repeatable
-  de BullMQ cuando exista la infraestructura de colas.
+  revisión manual. Corre como job repeatable diario (ver Mantenimiento).
 
 ### Pricing por mensaje
 
@@ -121,6 +120,46 @@ con firma válida debe dar 200 (con `express.json()` global el parser corta
 Cola (`src/queue/queue.module.ts`): reintentos 5 con backoff exponencial
 desde 3s, `removeOnComplete` por edad+cantidad y `removeOnFail` a 7 días
 para que Redis no crezca sin techo. El worker que consume es fase 3.
+
+### Worker (fase 3)
+
+`src/webhook-worker/`: consumidor de la cola. El processor es fino; la
+lógica vive en `WebhookEventHandler` (testeable sin Redis).
+
+- **Contrato con BullMQ**: evento inexistente / ya terminado / payload
+  imparseable / tenant irresoluble → job OK sin throw (reintentar no lo
+  arregla; queda `DISCARDED` con motivo). Solo errores reales (DB caída)
+  hacen throw → reintento con el backoff de la cola. Todo el reproceso es
+  seguro porque la persistencia es idempotente.
+- **Resolución de tenant**: `value.metadata.phone_number_id` →
+  `WhatsappAccount` → `tenantId`, por change (un payload puede traer
+  múltiples entries con `messages[]` y `statuses[]` mezclados).
+- **Entrantes** (`inbound-messages.service.ts`), en transacción y en este
+  orden: upsert `Contact` (resucita soft-deleted) → upsert `Conversation`
+  (unique triple, sin contadores) → `create` de `Message` con captura de
+  P2002 (**reintento de Meta = no-op, jamás infla `unreadCount`**) → recién
+  si el create creó: `lastInboundAt`/`lastMessageAt` con guarda monotónica,
+  `unreadCount { increment: 1 }` atómico, y reapertura si estaba `CLOSED`.
+  Decisiones deliberadas: reacciones refrescan `lastInboundAt` y pisan el
+  preview ("Reaccionó 👍") pero **no** suman `unreadCount`; entrantes se
+  guardan con `status: DELIVERED`; `LOCATION`/`CONTACTS` llevan su detalle
+  como JSON en `body` (raw sigue reservado a UNSUPPORTED/errores).
+- **Statuses** (`message-statuses.service.ts`): avance monotónico
+  PENDING < SENT < DELIVERED < READ vía `updateMany` condicional
+  (compare-and-set en la DB); un status tardío no retrocede el estado pero
+  sella su timestamp si estaba null. FAILED es terminal y sella
+  `failedAt` + `errorCode/Title/Detail`. El objeto `pricing` se mapea
+  cuando aparece (solo claves presentes — un status posterior sin pricing
+  no pisa con null). Salientes confirmados actualizan `lastOutboundAt`.
+- **Timestamps**: Meta manda epoch en **segundos** — `parseEpochSeconds`
+  multiplica ×1000 (test que fija el bug clásico del 1970).
+
+### Mantenimiento (purga programada)
+
+`src/maintenance/`: job repeatable de BullMQ (`upsertJobScheduler`, cron
+`0 4 * * *`) que corre `purgeWebhookEvents()`. Sin doble ejecución con N
+réplicas: el scheduler es idempotente por id y BullMQ entrega cada job a un
+solo worker (lock interno).
 
 ### Graph API version
 
@@ -179,7 +218,7 @@ docker/postgres/init/      # rol app_user (no superuser) + DB
 
 1. ✅ Esquema + migración + cifrado + seed + guard multi-tenant
 2. ✅ Webhook: GET verify, firma HMAC sobre raw body, encolado, 200 < 5s
-3. ⬜ Worker BullMQ: parseo, resolución de tenant por `phone_number_id`,
+3. ✅ Worker BullMQ: parseo, resolución de tenant por `phone_number_id`,
    idempotencia por wamid, statuses + pricing, job de purga
 4. ⬜ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
 5. ⬜ Media entrante → R2 (+ `R2MediaStorage` para retención)
