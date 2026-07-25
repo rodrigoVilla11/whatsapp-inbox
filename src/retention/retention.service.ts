@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MEDIA_STORAGE, MediaStorage } from '../media/media-storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { WITH_DELETED } from '../prisma/soft-delete';
-import { MEDIA_STORAGE, MediaStorage } from './media-storage';
 
 export interface PurgeContactResult {
   contactId: string;
@@ -18,9 +18,8 @@ export interface PurgeContactResult {
  *   mensajes + media en R2). Es el camino para "cliente pide que borren su
  *   conversación". Alcanza también filas soft-deleted.
  * - purgeWebhookEvents: poda PROCESSED/DISCARDED más viejos que la
- *   retención. FAILED se conserva hasta revisión manual.
- *   El wiring como job repeatable de BullMQ se engancha en la fase 3
- *   (cuando exista la infraestructura de colas); el método ya queda listo.
+ *   retención. FAILED se conserva hasta revisión manual. Corre como job
+ *   repeatable diario (MaintenanceModule).
  */
 @Injectable()
 export class RetentionService {
@@ -35,7 +34,7 @@ export class RetentionService {
   async purgeContact(tenantId: string, contactId: string): Promise<PurgeContactResult> {
     const db = this.prisma.db;
 
-    const { mediaUrls, conversationsDeleted, messagesDeleted } = await db.$transaction(
+    const { mediaKeys, conversationsDeleted, messagesDeleted } = await db.$transaction(
       async (tx) => {
         // WITH_DELETED: la purga debe alcanzar también lo soft-deleted
         const contact = await tx.contact.findFirst({
@@ -52,7 +51,8 @@ export class RetentionService {
         });
         const conversationIds = conversations.map((c) => c.id);
 
-        // URLs de media ANTES de borrar las filas que las referencian
+        // Keys de R2 ANTES de borrar las filas que las referencian
+        // (mediaUrl guarda la KEY del objeto, no una URL).
         const mediaMessages = await tx.message.findMany({
           where: {
             tenantId,
@@ -72,7 +72,7 @@ export class RetentionService {
         await tx.contact.deleteMany({ where: { tenantId, id: contactId } });
 
         return {
-          mediaUrls: mediaMessages.map((m) => m.mediaUrl).filter((u): u is string => u !== null),
+          mediaKeys: mediaMessages.map((m) => m.mediaUrl).filter((k): k is string => k !== null),
           conversationsDeleted,
           messagesDeleted,
         };
@@ -81,18 +81,18 @@ export class RetentionService {
 
     // Fuera de la transacción: si R2 falla, la DB ya quedó consistente y el
     // storage borra best-effort (huérfanos en R2 > fantasmas en la DB).
-    await this.mediaStorage.deleteByUrls(mediaUrls);
+    await this.mediaStorage.delete(mediaKeys);
 
     this.logger.log(
       `purgeContact tenant=${tenantId} contact=${contactId}: ` +
-        `${conversationsDeleted} conversaciones, ${messagesDeleted} mensajes, ${mediaUrls.length} media`,
+        `${conversationsDeleted} conversaciones, ${messagesDeleted} mensajes, ${mediaKeys.length} media`,
     );
 
     return {
       contactId,
       conversationsDeleted,
       messagesDeleted,
-      mediaObjectsDeleted: mediaUrls.length,
+      mediaObjectsDeleted: mediaKeys.length,
     };
   }
 

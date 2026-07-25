@@ -1,13 +1,11 @@
 import { Module } from '@nestjs/common';
-import { MEDIA_STORAGE, NoopMediaStorage } from './media-storage';
+import { MediaModule } from '../media/media.module';
 import { RetentionService } from './retention.service';
 
 @Module({
-  providers: [
-    RetentionService,
-    // Fase 5: reemplazar por la implementación R2 sin tocar RetentionService
-    { provide: MEDIA_STORAGE, useClass: NoopMediaStorage },
-  ],
+  // MediaModule exporta MEDIA_STORAGE: la purga borra media real en R2.
+  imports: [MediaModule],
+  providers: [RetentionService],
   exports: [RetentionService],
 })
 export class RetentionModule {}

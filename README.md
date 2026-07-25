@@ -77,9 +77,9 @@ El `PrismaClient` crudo es privado del servicio: no hay camino sin guard.
 
 - `purgeContact(tenantId, contactId)`: borrado **físico** de contacto +
   conversaciones + mensajes en una transacción, y después la media en R2
-  (best-effort, fuera de la transacción). Es el camino para "cliente pide
-  que borren su conversación". Hoy la media va al `NoopMediaStorage`; en
-  fase 5 se registra la implementación R2 sin tocar el servicio.
+  (best-effort, fuera de la transacción — las keys se juntan ANTES de
+  borrar las filas). Es el camino para "cliente pide que borren su
+  conversación".
 - `purgeWebhookEvents()`: poda `PROCESSED`/`DISCARDED` más viejos que
   `WEBHOOK_RETENTION_DAYS` (default 60). `FAILED` se conserva hasta
   revisión manual. Corre como job repeatable diario (ver Mantenimiento).
@@ -202,6 +202,38 @@ respuesta siempre `{ message, error }`; la UI decide por `error.code`
   tenant del seed y su OWNER como `sentByUserId` — marcado TODO(auth); al
   montar auth real solo se reemplaza el middleware.
 
+### Media (fase 5)
+
+`src/media/` — descarga entrante, storage R2 y saliente multipart.
+
+- **Storage** (`r2-media-storage.ts`, S3-compatible): bucket **privado**;
+  `Message.mediaUrl` guarda la **KEY** (`{tenantId}/{conversationId}/
+  {messageId}/{filename}` — tenant primero: borrar por tenant/conversación
+  es un prefijo), nunca una URL. Las URLs se firman al servir con TTL
+  corto (`MEDIA_URL_TTL_SECONDS`, default 15 min). Sin `R2_*` en env el
+  módulo cae a un noop con warning (solo dev). La purga de `purgeContact`
+  ahora borra los objetos de verdad.
+- **Descarga entrante** (`media-download.service.ts`): job `media-download`
+  encolado por el worker **tras el commit** de la transacción del mensaje.
+  Los dos GETs (metadata → binario) van en el mismo job porque la URL de
+  Meta expira en minutos; cada reintento pide una fresca. SHA-256 verificado
+  contra lo declarado (hex o base64) — mismatch = fallo de descarga →
+  reintento. Techos por tipo (`MEDIA_MAX_*_MB`; excedido → FAILED **sin**
+  reintento). 3 intentos con backoff; agotados → `mediaStatus: FAILED`.
+  Idempotente: DOWNLOADED no re-sube.
+- **Servido**: `GET /messages/:id/media` → 302 a URL firmada si DOWNLOADED;
+  409 `{ mediaStatus }` si PENDING/FAILED; 404 si no existe o es de otro
+  tenant (indistinguible a propósito).
+- **Saliente**: `POST /conversations/:id/media` (multipart `file` +
+  `clientDedupKey` + `caption?`). Dedup y validaciones ANTES de subir nada:
+  allowlist de content-types de WhatsApp, magic bytes contra el tipo
+  declarado (mismatch → 422 `MEDIA_INVALID`), techos (→ 413
+  `MEDIA_TOO_LARGE`), y ventana de 24h (media es mensaje de sesión: misma
+  regla que texto). Después: R2 (key con el messageId pre-generado) + Meta
+  (`POST /{phoneNumberId}/media` → `media_id`, que expira ~30 días y NO se
+  reusa) + envío por `SendMessageService` (mismo dedup/errores). El Message
+  saliente nace `DOWNLOADED` (ya lo tenemos nosotros).
+
 ### Graph API version
 
 Constante `GRAPH_API_VERSION` en `src/whatsapp/graph-api.constants.ts`,
@@ -278,6 +310,6 @@ docker/postgres/init/      # rol app_user (no superuser) + DB
 3. ✅ Worker BullMQ: parseo, resolución de tenant por `phone_number_id`,
    idempotencia por wamid, statuses + pricing, job de purga
 4. ✅ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
-5. ⬜ Media entrante → R2 (+ `R2MediaStorage` para retención)
+5. ✅ Media entrante → R2 + saliente multipart (+ `R2MediaStorage` para retención)
 6. ⬜ Gateway WebSocket
 7. ⬜ Frontend Next.js (3 columnas, tablet-first)

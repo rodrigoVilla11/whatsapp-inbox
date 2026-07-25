@@ -9,6 +9,7 @@ import { TemplatesController } from './templates.controller';
 @Module({
   controllers: [MessagesController, TemplatesController],
   providers: [SendMessageService, TemplateSyncService, GraphApiClient, TenantContextMiddleware],
+  exports: [SendMessageService, GraphApiClient],
 })
 export class MessagingModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

@@ -15,14 +15,38 @@ import { expiredLastInboundAt, isWindowOpen, windowExpiresAt } from './window';
 
 const PREVIEW_MAX_CHARS = 120;
 
+/**
+ * La variante 'media' es SOLO server-side: la construye OutboundMediaService
+ * después de subir el archivo a R2 y a Meta. El controller HTTP de mensajes
+ * únicamente acepta text/template; media entra por POST /conversations/:id/media.
+ */
 export type SendRequest =
   | { clientDedupKey: string; type: 'text'; body: string }
-  | { clientDedupKey: string; type: 'template'; templateId: string; params: string[] };
+  | { clientDedupKey: string; type: 'template'; templateId: string; params: string[] }
+  | {
+      clientDedupKey: string;
+      type: 'media';
+      messageType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+      /** media_id de Meta (expira ~30 días: se sube por envío, no se reusa). */
+      metaMediaId: string;
+      /** Key en R2 (el objeto ya está subido). */
+      mediaKey: string;
+      mediaMimeType: string;
+      mediaSizeBytes: number;
+      filename: string | null;
+      caption: string | null;
+      /** Id pre-generado: la key de R2 ya lo contiene ({tenant}/{conv}/{msgId}/...). */
+      forcedMessageId: string;
+    };
 
 export interface SendOutcome {
   httpStatus: number;
   message: Message | null;
-  error: { code: SendErrorCode | 'TEMPLATE_INVALID'; message: string; windowExpiresAt?: string | null } | null;
+  error: {
+    code: SendErrorCode | 'TEMPLATE_INVALID' | 'MEDIA_INVALID' | 'MEDIA_TOO_LARGE';
+    message: string;
+    windowExpiresAt?: string | null;
+  } | null;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -100,6 +124,7 @@ export class SendMessageService {
     try {
       message = await db.message.create({
         data: {
+          id: prepared.forcedId ?? undefined,
           tenantId,
           conversationId: conversation.id,
           whatsappAccountId: account.id,
@@ -112,6 +137,7 @@ export class SendMessageService {
           templateName: prepared.templateName,
           templateLanguage: prepared.templateLanguage,
           templateParams: prepared.templateParams ?? undefined,
+          ...(prepared.mediaFields ?? {}),
           sentByUserId,
           timestamp: new Date(),
         },
@@ -201,9 +227,9 @@ export class SendMessageService {
       data: { wamid: result!.wamid },
     });
     const preview =
-      prepared.body && prepared.body.length > PREVIEW_MAX_CHARS
-        ? `${prepared.body.slice(0, PREVIEW_MAX_CHARS - 1)}…`
-        : (prepared.body ?? '');
+      prepared.preview.length > PREVIEW_MAX_CHARS
+        ? `${prepared.preview.slice(0, PREVIEW_MAX_CHARS - 1)}…`
+        : prepared.preview;
     await db.conversation.updateMany({
       where: {
         id: conversation.id,
@@ -227,6 +253,21 @@ export class SendMessageService {
 
   // ─────────────────────────────────────────────────────────────────────
 
+  private windowExpiredOutcome(conversation: Conversation): { error: SendOutcome } {
+    return {
+      error: {
+        httpStatus: 422,
+        message: null,
+        error: {
+          code: 'WINDOW_EXPIRED',
+          message:
+            'La ventana de 24 horas está cerrada. Usá una plantilla aprobada para contactar al cliente.',
+          windowExpiresAt: windowExpiresAt(conversation)?.toISOString() ?? null,
+        },
+      },
+    };
+  }
+
   private async prepare(
     tenantId: string,
     conversation: Conversation,
@@ -236,10 +277,13 @@ export class SendMessageService {
     | {
         payload: object;
         body: string | null;
-        messageType: 'TEXT' | 'TEMPLATE';
+        preview: string;
+        messageType: 'TEXT' | 'TEMPLATE' | 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
         templateName: string | null;
         templateLanguage: string | null;
         templateParams: string[] | null;
+        mediaFields?: Record<string, unknown>;
+        forcedId?: string;
       }
     | { error: SendOutcome }
   > {
@@ -247,26 +291,61 @@ export class SendMessageService {
       // El backend es quien rechaza texto libre con ventana cerrada — no se
       // confía en que el frontend lo impida.
       if (!isWindowOpen(conversation)) {
-        return {
-          error: {
-            httpStatus: 422,
-            message: null,
-            error: {
-              code: 'WINDOW_EXPIRED',
-              message:
-                'La ventana de 24 horas está cerrada. Usá una plantilla aprobada para contactar al cliente.',
-              windowExpiresAt: windowExpiresAt(conversation)?.toISOString() ?? null,
-            },
-          },
-        };
+        return this.windowExpiredOutcome(conversation);
       }
       return {
         payload: { to: contact.waId, type: 'text', text: { body: request.body } },
         body: request.body,
+        preview: request.body,
         messageType: 'TEXT',
         templateName: null,
         templateLanguage: null,
         templateParams: null,
+      };
+    }
+
+    if (request.type === 'media') {
+      // Media saliente = mensaje de sesión, misma regla que el texto libre:
+      // requiere ventana abierta (las plantillas siguen siendo la única
+      // alternativa con ventana cerrada).
+      if (!isWindowOpen(conversation)) {
+        return this.windowExpiredOutcome(conversation);
+      }
+      const kind = { IMAGE: 'image', VIDEO: 'video', AUDIO: 'audio', DOCUMENT: 'document' }[
+        request.messageType
+      ];
+      const mediaObject: Record<string, unknown> = { id: request.metaMediaId };
+      if (request.caption && kind !== 'audio') mediaObject.caption = request.caption;
+      if (kind === 'document' && request.filename) mediaObject.filename = request.filename;
+
+      const label = { IMAGE: '📷 Imagen', VIDEO: '🎥 Video', AUDIO: '🎙️ Audio', DOCUMENT: '📄' }[
+        request.messageType
+      ];
+      const preview =
+        request.messageType === 'DOCUMENT'
+          ? `📄 ${request.filename ?? 'Documento'}`
+          : request.caption
+            ? `${label.split(' ')[0]} ${request.caption}`
+            : label;
+
+      return {
+        payload: { to: contact.waId, type: kind, [kind]: mediaObject },
+        body: request.caption,
+        preview,
+        messageType: request.messageType,
+        templateName: null,
+        templateLanguage: null,
+        templateParams: null,
+        forcedId: request.forcedMessageId,
+        mediaFields: {
+          // Ya lo tenemos nosotros en R2: DOWNLOADED desde el inicio.
+          mediaId: request.metaMediaId,
+          mediaUrl: request.mediaKey,
+          mediaMimeType: request.mediaMimeType,
+          mediaFilename: request.filename,
+          mediaSizeBytes: request.mediaSizeBytes,
+          mediaStatus: 'DOWNLOADED',
+        },
       };
     }
 
@@ -307,6 +386,7 @@ export class SendMessageService {
       };
     }
 
+    const rendered = renderTemplateBody(template.bodyText, params);
     return {
       payload: {
         to: contact.waId,
@@ -326,7 +406,8 @@ export class SendMessageService {
             : {}),
         },
       },
-      body: renderTemplateBody(template.bodyText, params),
+      body: rendered,
+      preview: rendered,
       messageType: 'TEMPLATE',
       templateName: template.name,
       templateLanguage: template.language,

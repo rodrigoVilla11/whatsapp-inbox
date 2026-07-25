@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { WhatsappAccount } from '@prisma/client';
 import { EncryptionService } from '../crypto/encryption.service';
+import { MediaTooLargeError } from '../media/media-limits';
 import { GRAPH_API_VERSION, graphApiBaseUrl } from './graph-api.constants';
 
 /** Cuerpo de error estándar de Graph API. */
@@ -95,6 +96,90 @@ export class GraphApiClient {
       { method: 'POST', body: { messaging_product: 'whatsapp', ...payload } },
     );
     return { wamid: body?.messages?.[0]?.id ?? null };
+  }
+
+  /**
+   * GET /{version}/{mediaId} → metadata + URL temporal de descarga.
+   * La URL expira en minutos: SIEMPRE se pide fresca en el mismo job que
+   * descarga, jamás se persiste.
+   */
+  async getMediaInfo(
+    account: WhatsappAccount,
+    mediaId: string,
+  ): Promise<{ url: string | null; mimeType: string | null; sha256: string | null; fileSizeBytes: number | null }> {
+    const body = await this.request<{
+      url?: string;
+      mime_type?: string;
+      sha256?: string;
+      file_size?: number;
+    }>(account, `/${mediaId}`, { method: 'GET' });
+    return {
+      url: body?.url ?? null,
+      mimeType: body?.mime_type ?? null,
+      sha256: body?.sha256 ?? null,
+      fileSizeBytes: body?.file_size ?? null,
+    };
+  }
+
+  /**
+   * Descarga el binario desde la URL temporal (host lookaside, no Graph),
+   * también con Bearer. Corta ANTES de bufferear si Content-Length excede
+   * el techo, y re-verifica sobre los bytes reales.
+   */
+  async downloadMediaBinary(
+    account: WhatsappAccount,
+    url: string,
+    maxBytes: number,
+  ): Promise<Buffer> {
+    const token = this.encryption.decrypt(account.accessTokenEnc);
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) {
+      // 404 típico = URL expirada; el reintento del job pide una fresca.
+      throw new GraphApiError(response.status, undefined);
+    }
+    const declared = Number(response.headers.get('content-length') ?? '0');
+    if (declared > maxBytes) {
+      throw new MediaTooLargeError(declared, maxBytes);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) {
+      throw new MediaTooLargeError(buffer.length, maxBytes);
+    }
+    return buffer;
+  }
+
+  /**
+   * POST /{version}/{phoneNumberId}/media (multipart) → media_id de Meta.
+   * El media_id expira a los ~30 días: NO se persiste como reutilizable,
+   * se sube por envío.
+   */
+  async uploadMedia(
+    account: WhatsappAccount,
+    buffer: Buffer,
+    contentType: string,
+    filename: string,
+  ): Promise<string> {
+    const token = this.encryption.decrypt(account.accessTokenEnc);
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', contentType);
+    form.append('file', new Blob([new Uint8Array(buffer)], { type: contentType }), filename);
+
+    const response = await fetch(`${this.baseUrl(account)}/${account.phoneNumberId}/media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | { error?: MetaErrorBody; id?: string }
+      | null;
+    if (!response.ok) throw new GraphApiError(response.status, body?.error);
+    if (!body?.id) throw new GraphApiError(response.status, { message: 'upload sin id' });
+    return body.id;
   }
 
   /** GET /{version}/{wabaId}/message_templates — paginado completo. */

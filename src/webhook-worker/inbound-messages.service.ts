@@ -1,6 +1,13 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma, WhatsappAccount } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  MEDIA_DOWNLOAD_JOB,
+  MEDIA_DOWNLOAD_QUEUE,
+  MediaDownloadJob,
+} from '../queue/queue.constants';
 import {
   buildMessagePreview,
   mapInboundMessage,
@@ -28,7 +35,11 @@ function isUniqueViolation(error: unknown): boolean {
 export class InboundMessagesService {
   private readonly logger = new Logger(InboundMessagesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(MEDIA_DOWNLOAD_QUEUE)
+    private readonly mediaQueue: Queue<MediaDownloadJob>,
+  ) {}
 
   async processMessage(
     account: WhatsappAccount,
@@ -49,7 +60,7 @@ export class InboundMessagesService {
     const profileName =
       value.contacts?.find((c) => c.wa_id === waId)?.profile?.name ?? null;
 
-    await this.prisma.db.$transaction(async (tx) => {
+    const created = await this.prisma.db.$transaction(async (tx) => {
       // 1 ── Contact. Un mensaje nuevo resucita un contacto soft-deleted:
       // si el cliente volvió a escribir, tiene que volver a verse.
       const contact = await tx.contact.upsert({
@@ -87,8 +98,9 @@ export class InboundMessagesService {
 
       // 3 ── Message. P2002 = reintento de Meta: no-op silencioso, y lo
       // crítico: NO se ejecuta el paso 4 (unreadCount jamás se infla).
+      let createdMessage;
       try {
-        await tx.message.create({
+        createdMessage = await tx.message.create({
           data: {
             tenantId,
             conversationId: conversation.id,
@@ -118,7 +130,7 @@ export class InboundMessagesService {
       } catch (error) {
         if (isUniqueViolation(error)) {
           this.logger.debug(`Mensaje duplicado (reintento de Meta): ${wamid} — no-op`);
-          return;
+          return null;
         }
         throw error;
       }
@@ -160,6 +172,19 @@ export class InboundMessagesService {
           data: bump,
         });
       }
+
+      return { messageId: createdMessage.id as string, hasMedia: mapped.hasMedia };
     });
+
+    // Encolado de la descarga TRAS el commit, nunca adentro de la tx: si
+    // el worker de media corre antes del commit no vería el mensaje, y si
+    // la tx rollbackea no debe quedar un job huérfano.
+    if (created?.hasMedia) {
+      await this.mediaQueue.add(
+        MEDIA_DOWNLOAD_JOB,
+        { tenantId, messageId: created.messageId },
+        { jobId: `media-${created.messageId}` },
+      );
+    }
   }
 }

@@ -10,6 +10,16 @@ export interface ProcessWebhookEventJob {
   webhookEventId: string;
 }
 
+/** Descarga de media entrante (fase 5). El job es liviano: ids solamente. */
+export const MEDIA_DOWNLOAD_QUEUE = 'media-download';
+
+export const MEDIA_DOWNLOAD_JOB = 'download-media';
+
+export interface MediaDownloadJob {
+  tenantId: string;
+  messageId: string;
+}
+
 /** Cola de mantenimiento (jobs programados: purgas, etc.). */
 export const MAINTENANCE_QUEUE = 'maintenance';
 

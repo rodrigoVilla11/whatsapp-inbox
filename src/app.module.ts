@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CryptoModule } from './crypto/crypto.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { MediaModule } from './media/media.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
@@ -20,6 +21,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     WebhookWorkerModule,
     MaintenanceModule,
     MessagingModule,
+    MediaModule,
   ],
 })
 export class AppModule {}

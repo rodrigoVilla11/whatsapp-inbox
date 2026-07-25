@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Queue } from 'bullmq';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import { InboundMessagesService } from '../src/webhook-worker/inbound-messages.service';
 import { MessageStatusesService } from '../src/webhook-worker/message-statuses.service';
@@ -14,12 +15,13 @@ const TS_MS = TS * 1000;
 
 let db: FakeDb;
 let handler: WebhookEventHandler;
+let mediaQueue: { add: ReturnType<typeof vi.fn> };
 
 function makeHandler(fake: FakeDb): WebhookEventHandler {
   const prisma = { db: fake } as unknown as PrismaService;
   return new WebhookEventHandler(
     prisma,
-    new InboundMessagesService(prisma),
+    new InboundMessagesService(prisma, mediaQueue as unknown as Queue),
     new MessageStatusesService(prisma),
   );
 }
@@ -76,6 +78,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   db = createFakeDb();
+  mediaQueue = { add: vi.fn().mockResolvedValue({}) };
   handler = makeHandler(db);
   seedAccount();
 });
@@ -156,6 +159,28 @@ describe('WebhookEventHandler — mensajes entrantes', () => {
     expect(db.message.rows).toHaveLength(2);
     expect(db.conversation.rows[0].unreadCount).toBe(2);
     expect((db.conversation.rows[0].lastInboundAt as Date).getTime()).toBe((TS + 60) * 1000);
+  });
+
+  it('mensaje con media → mediaStatus PENDING y job de descarga encolado TRAS el commit', async () => {
+    const image = textMessage({
+      id: 'wamid.IMG',
+      type: 'image',
+      text: undefined,
+      image: { id: 'media_meta_1', mime_type: 'image/jpeg', sha256: 'abc' },
+    });
+    await handler.handle(seedEvent(payloadOf(change({ contacts: CONTACTS, messages: [image] }))));
+
+    const msg = db.message.rows[0];
+    expect(msg).toMatchObject({ type: 'IMAGE', mediaId: 'media_meta_1', mediaStatus: 'PENDING' });
+    expect(mediaQueue.add).toHaveBeenCalledWith(
+      'download-media',
+      { tenantId: TENANT, messageId: msg.id },
+      { jobId: `media-${msg.id}` },
+    );
+
+    // reintento de Meta (mismo wamid) → NO se encola de nuevo
+    await handler.handle(seedEvent(payloadOf(change({ contacts: CONTACTS, messages: [image] }))));
+    expect(mediaQueue.add).toHaveBeenCalledTimes(1);
   });
 
   it('tipo inventado → UNSUPPORTED con raw poblado', async () => {

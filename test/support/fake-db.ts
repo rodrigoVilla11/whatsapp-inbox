@@ -74,6 +74,10 @@ export function matchWhere(row: Row, where: Row | undefined): boolean {
       if (row[key] != null) return false;
       continue;
     }
+    // Filtro vacío ({} — p.ej. WITH_DELETED): en Prisma matchea todo.
+    if (isPlainObject(cond) && Object.keys(cond).length === 0) {
+      continue;
+    }
     if (isOperatorObject(cond)) {
       if (!matchOperator(row[key], cond)) return false;
       continue;
