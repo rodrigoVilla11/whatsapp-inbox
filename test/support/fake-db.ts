@@ -203,6 +203,7 @@ export interface FakeDb {
   contact: FakeModel;
   conversation: FakeModel;
   message: FakeModel;
+  messageTemplate: FakeModel;
   $transaction<T>(fn: (tx: FakeDb) => Promise<T>): Promise<T>;
 }
 
@@ -263,6 +264,11 @@ export function createFakeDb(): FakeDb {
         deletedAt: null,
       },
       [['tenantId', 'wamid'], ['tenantId', 'clientDedupKey']],
+    ),
+    messageTemplate: new FakeModel(
+      'tpl',
+      { status: 'PENDING', components: null, variableCount: 0, metaTemplateId: null, syncedAt: null },
+      [['tenantId', 'whatsappAccountId', 'name', 'language']],
     ),
     $transaction: async (fn) => fn(db),
   };

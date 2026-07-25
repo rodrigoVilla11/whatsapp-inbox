@@ -161,6 +161,47 @@ lógica vive en `WebhookEventHandler` (testeable sin Redis).
 réplicas: el scheduler es idempotente por id y BullMQ entrega cada job a un
 solo worker (lock interno).
 
+### Envío (fase 4)
+
+`POST /conversations/:id/messages` — síncrono (la cajera necesita feedback
+inmediato), solo texto y plantilla (media saliente: fase 5). Envelope de
+respuesta siempre `{ message, error }`; la UI decide por `error.code`
+(dominio), nunca por el código numérico de Meta.
+
+- **Ventana de 24h** (`src/messaging/window.ts`): `isWindowOpen` /
+  `windowExpiresAt` sobre `lastInboundAt`. El backend rechaza texto libre
+  con ventana cerrada (422 `WINDOW_EXPIRED`) antes de llamar a Meta; las
+  plantillas pasan siempre.
+- **Flujo** (`send-message.service.ts`): dedup por
+  `(tenantId, clientDedupKey)` — replay del frontend devuelve el mensaje
+  existente con CERO llamadas a Meta → `Message` PENDING con `wamid: null`
+  → Meta → OK: `wamid` + conversación (status queda PENDING hasta el
+  webhook `sent` de fase 3); error: FAILED con el error de Meta.
+- **Contrato de replay (obliga a la UI, fase 7)**: el dedup devuelve el
+  mensaje existente **aunque esté FAILED**. El frontend debe distinguir:
+  *reintento de red* (timeout, respuesta perdida) → **misma**
+  `clientDedupKey`; *botón "reintentar" sobre un FAILED* → **nueva**
+  `clientDedupKey`, porque es un envío nuevo por decisión humana — si
+  reusa la key recibe el mismo fallo cacheado para siempre.
+- **Errores** (`meta-send-errors.ts`): 131047 → `WINDOW_EXPIRED` **y
+  auto-corrección**: se rebobina `lastInboundAt` a `now - 24h` (Meta gana;
+  la UI cae a modo plantilla al instante — mecanismo documentado en
+  `window.ts`). El rebobinado es un CAS: solo aplica si `lastInboundAt`
+  no avanzó después del arranque del intento — un entrante fresco que
+  llegó durante el envío fallido gana sobre el rebobinado. 131026 → `RECIPIENT_UNREACHABLE`. 130429 →
+  `RATE_LIMITED` con UN reintento inline (backoff 1.5s, jamás más). 401 /
+  código 190 → `ACCOUNT_ERROR` + cuenta marcada `TOKEN_EXPIRED` (señal del
+  flujo de reconexión futuro). Resto → `SEND_FAILED` con el código crudo.
+- **Plantillas**: valida APPROVED + cantidad de parámetros contra
+  `variableCount` antes de llamar; `components` construido desde params;
+  `body` guardado renderizado. Sync manual: `POST /templates/sync` →
+  `GET /{wabaId}/message_templates` paginado, upsert por unique cuádruple;
+  las que Meta ya no lista se **marcan DISABLED, no se borran** (el
+  histórico sigue explicable y si reaparecen el sync las reactiva).
+- **Tenant provisional**: `src/tenant/tenant-context.middleware.ts` fija el
+  tenant del seed y su OWNER como `sentByUserId` — marcado TODO(auth); al
+  montar auth real solo se reemplaza el middleware.
+
 ### Graph API version
 
 Constante `GRAPH_API_VERSION` en `src/whatsapp/graph-api.constants.ts`,
@@ -214,13 +255,29 @@ src/
 docker/postgres/init/      # rol app_user (no superuser) + DB
 ```
 
+## Checklist para el primer envío real
+
+1. **Credenciales**: completar las `SEED_*` en `.env` (app id/secret, verify
+   token, phoneNumberId, wabaId, access token) y re-correr `npm run db:seed`
+   — la cuenta pasa de PENDING/TOKEN_EXPIRED a ACTIVE y todo queda cifrado.
+2. **Versión de Graph API**: confirmar contra el changelog de Meta y
+   reemplazar el placeholder `vXX.X` en `src/whatsapp/graph-api.constants.ts`.
+3. **Token duradero**: el token de dev del panel expira en ~24h; para operar
+   generar un token de system user (o esperar el Embedded Signup).
+4. **Webhook público**: exponer la API (túnel o VPS), configurar la URL y el
+   verify token en la app de Meta, y suscribir el campo `messages` del WABA.
+5. **Destinatarios**: en modo desarrollo Meta solo entrega a números de la
+   allowlist de prueba — agregar el número a testear, o publicar la app.
+6. **Plantilla aprobada** para probar fuera de ventana (`hello_world` del
+   sandbox sirve) y correr `POST /templates/sync` para traerla.
+
 ## Fases
 
 1. ✅ Esquema + migración + cifrado + seed + guard multi-tenant
 2. ✅ Webhook: GET verify, firma HMAC sobre raw body, encolado, 200 < 5s
 3. ✅ Worker BullMQ: parseo, resolución de tenant por `phone_number_id`,
    idempotencia por wamid, statuses + pricing, job de purga
-4. ⬜ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
+4. ✅ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
 5. ⬜ Media entrante → R2 (+ `R2MediaStorage` para retención)
 6. ⬜ Gateway WebSocket
 7. ⬜ Frontend Next.js (3 columnas, tablet-first)
