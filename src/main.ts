@@ -1,14 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { configureBodyParsers } from './http/body-parsers';
 
 async function bootstrap(): Promise<void> {
-  // rawBody: true desde el día uno. La validación de X-Hub-Signature-256
-  // (fase 2) firma sobre el raw body EXACTO que mandó Meta; firmar sobre el
-  // objeto parseado y re-serializado nunca coincide.
+  // bodyParser: false — los parsers se registran a mano en
+  // configureBodyParsers: /webhooks necesita el raw body exacto para la
+  // firma HMAC y no puede morir 400 ante JSON inválido. Ver src/http/.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    rawBody: true,
+    bodyParser: false,
   });
+  configureBodyParsers(app);
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);

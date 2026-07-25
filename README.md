@@ -94,6 +94,34 @@ Desde oct 2026 Meta cobra mensajes de servicio; sin esto no hay backfill.
 `@@index([tenantId, billable, timestamp])` responde "cuánto gastó este
 tenant este mes" con un index scan.
 
+### Webhook (fase 2)
+
+Rutas:
+
+- `GET /webhooks/whatsapp` (y `/:ref`): verificación de Meta. El
+  `hub.verify_token` se compara (timing-safe) contra el token **descifrado
+  de la MetaApp** resuelta por ref — nunca contra env. El `hub.challenge`
+  se responde como **texto plano** (la serialización JSON default de Nest
+  lo devolvería entre comillas y la verificación falla sin error obvio).
+  Ref inexistente → 404.
+- `POST /webhooks/whatsapp` (y `/:ref`): valida `X-Hub-Signature-256`
+  (HMAC-SHA256 del **raw body** con el app secret descifrado,
+  `crypto.timingSafeEqual` con chequeo de longitud previo). Firma
+  ausente/ inválida → 401 sin persistir. Firma válida → `WebhookEvent`
+  RECEIVED → job en BullMQ **con solo el id del evento** → QUEUED → 200.
+  Cero parseo de mensajes en el request. Ref inexistente → **200 igual**
+  (404 repetidos hacen que Meta marque el endpoint caído) + evento
+  DISCARDED. Error interno post-firma → log + FAILED + **200 igual**.
+
+Body parsers (`src/http/body-parsers.ts`): `/webhooks` recibe **solo raw**
+— la firma se calcula sobre los bytes exactos del wire, y un JSON inválido
+con firma válida debe dar 200 (con `express.json()` global el parser corta
+400 antes del controller). El `JSON.parse` lo hace el service en try/catch.
+
+Cola (`src/queue/queue.module.ts`): reintentos 5 con backoff exponencial
+desde 3s, `removeOnComplete` por edad+cantidad y `removeOnFail` a 7 días
+para que Redis no crezca sin techo. El worker que consume es fase 3.
+
 ### Graph API version
 
 Constante `GRAPH_API_VERSION` en `src/whatsapp/graph-api.constants.ts`,
@@ -150,7 +178,7 @@ docker/postgres/init/      # rol app_user (no superuser) + DB
 ## Fases
 
 1. ✅ Esquema + migración + cifrado + seed + guard multi-tenant
-2. ⬜ Webhook: GET verify, firma HMAC sobre raw body, encolado, 200 < 5s
+2. ✅ Webhook: GET verify, firma HMAC sobre raw body, encolado, 200 < 5s
 3. ⬜ Worker BullMQ: parseo, resolución de tenant por `phone_number_id`,
    idempotencia por wamid, statuses + pricing, job de purga
 4. ⬜ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
