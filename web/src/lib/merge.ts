@@ -1,0 +1,82 @@
+import type { Conversation, Message } from './types';
+
+/**
+ * Lógica PURA de merge del estado con los eventos WS (contrato fase 6).
+ * Sin React ni zustand acá: es lo que se testea.
+ */
+
+function messageOrder(a: Message, b: Message): number {
+  const ta = Date.parse(a.timestamp);
+  const tb = Date.parse(b.timestamp);
+  if (ta !== tb) return ta - tb; // ascendente: el hilo se lee de arriba a abajo
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export function sortMessages(list: Message[]): Message[] {
+  return [...list].sort(messageOrder);
+}
+
+/**
+ * message.created / respuesta del POST propio → upsert con dedup:
+ * 1. por id (el evento WS del mensaje que ya llegó por REST, o viceversa);
+ * 2. por clientDedupKey (la copia del servidor reemplaza al optimista local).
+ * La copia entrante es la autoritativa; los flags _local se limpian.
+ */
+export function upsertMessage(list: Message[], incoming: Message): Message[] {
+  const cleaned: Message = { ...incoming };
+  delete cleaned._local;
+
+  const byId = list.findIndex((m) => m.id === incoming.id);
+  if (byId >= 0) {
+    const merged = list.map((m, i) => (i === byId ? { ...m, ...cleaned, _local: undefined } : m));
+    return sortMessages(merged);
+  }
+  if (incoming.clientDedupKey) {
+    const byKey = list.findIndex((m) => m.clientDedupKey === incoming.clientDedupKey);
+    if (byKey >= 0) {
+      const merged = list.map((m, i) =>
+        i === byKey ? { ...m, ...cleaned, id: incoming.id, _local: undefined } : m,
+      );
+      return sortMessages(merged);
+    }
+  }
+  return sortMessages([...list, cleaned]);
+}
+
+/** message.updated → merge de `changes` sobre el mensaje existente. */
+export function applyMessageChanges(
+  list: Message[],
+  id: string,
+  changes: Partial<Message>,
+): Message[] {
+  if (!list.some((m) => m.id === id)) return list;
+  return list.map((m) => (m.id === id ? { ...m, ...changes } : m));
+}
+
+function conversationOrder(a: Conversation, b: Conversation): number {
+  const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : null;
+  const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : null;
+  if (ta === null && tb === null) return a.id < b.id ? 1 : -1;
+  if (ta === null) return 1; // sin mensajes al final
+  if (tb === null) return -1;
+  if (ta !== tb) return tb - ta; // descendente
+  return a.id < b.id ? 1 : -1;
+}
+
+export function sortConversations(list: Conversation[]): Conversation[] {
+  return [...list].sort(conversationOrder);
+}
+
+/**
+ * conversation.updated → REEMPLAZO de la fila (el server manda el estado
+ * completo), preservando el contact embebido que el evento WS no trae.
+ */
+export function upsertConversation(list: Conversation[], incoming: Conversation): Conversation[] {
+  const existing = list.find((c) => c.id === incoming.id);
+  const merged: Conversation = {
+    ...incoming,
+    contact: incoming.contact ?? existing?.contact ?? null,
+  };
+  const rest = list.filter((c) => c.id !== incoming.id);
+  return sortConversations([...rest, merged]);
+}

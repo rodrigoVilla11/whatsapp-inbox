@@ -2,6 +2,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma, WhatsappAccount } from '@prisma/client';
 import { Queue } from 'bullmq';
+import { serializeConversation, serializeMessage } from '../common/serializers';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -200,7 +201,7 @@ export class InboundMessagesService {
     await this.events.publish({
       tenantId,
       type: 'message.created',
-      payload: { conversationId, message: created.message },
+      payload: { conversationId, message: serializeMessage(created.message) },
     });
     const freshConversation = await this.prisma.db.conversation.findFirst({
       where: { id: conversationId, tenantId },
@@ -209,7 +210,7 @@ export class InboundMessagesService {
       await this.events.publish({
         tenantId,
         type: 'conversation.updated',
-        payload: { conversation: freshConversation },
+        payload: { conversation: serializeConversation(freshConversation) },
       });
     }
   }

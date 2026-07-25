@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Contact, Conversation, Message, WhatsappAccount } from '@prisma/client';
+import { serializeConversation, serializeMessage } from '../common/serializers';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphApiClient, GraphApiError } from '../whatsapp/graph-api.client';
@@ -225,7 +226,7 @@ export class SendMessageService {
         await this.events.publish({
           tenantId,
           type: 'message.created',
-          payload: { conversationId: conversation.id, message: failed },
+          payload: { conversationId: conversation.id, message: serializeMessage(failed) },
         });
       }
       if (mapped.metaCode === META_ERROR_WINDOW_EXPIRED) {
@@ -236,7 +237,7 @@ export class SendMessageService {
           await this.events.publish({
             tenantId,
             type: 'conversation.updated',
-            payload: { conversation: freshConversation },
+            payload: { conversation: serializeConversation(freshConversation) },
           });
         }
       }
@@ -280,7 +281,7 @@ export class SendMessageService {
       await this.events.publish({
         tenantId,
         type: 'message.created',
-        payload: { conversationId: conversation.id, message: sent },
+        payload: { conversationId: conversation.id, message: serializeMessage(sent) },
       });
     }
     const freshConversation = await db.conversation.findFirst({
@@ -290,7 +291,7 @@ export class SendMessageService {
       await this.events.publish({
         tenantId,
         type: 'conversation.updated',
-        payload: { conversation: freshConversation },
+        payload: { conversation: serializeConversation(freshConversation) },
       });
     }
 

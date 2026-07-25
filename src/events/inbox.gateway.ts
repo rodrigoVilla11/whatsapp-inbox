@@ -7,6 +7,7 @@ import {
 } from '@nestjs/websockets';
 import IORedis from 'ioredis';
 import type { Namespace, Socket } from 'socket.io';
+import { corsOrigins } from '../http/cors';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { DOMAIN_EVENTS_CHANNEL, DomainEvent, tenantRoom } from './domain-events';
 
@@ -22,7 +23,9 @@ import { DOMAIN_EVENTS_CHANNEL, DomainEvent, tenantRoom } from './domain-events'
  */
 @WebSocketGateway({
   namespace: '/inbox',
-  cors: { origin: true, credentials: true },
+  // corsOrigins() lee env al evaluar el decorador — main.ts importa
+  // dotenv/config antes que AppModule para que ya esté cargado.
+  cors: { origin: corsOrigins(), credentials: true },
 })
 export class InboxGateway implements OnGatewayConnection, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(InboxGateway.name);

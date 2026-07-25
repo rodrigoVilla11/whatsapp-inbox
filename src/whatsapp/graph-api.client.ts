@@ -99,6 +99,17 @@ export class GraphApiClient {
   }
 
   /**
+   * Marca un mensaje entrante como leído (tildes azules del cliente).
+   * Best-effort desde el caller: cortesía, no funcionalidad crítica.
+   */
+  async markMessageRead(account: WhatsappAccount, wamid: string): Promise<void> {
+    await this.request(account, `/${account.phoneNumberId}/messages`, {
+      method: 'POST',
+      body: { status: 'read', message_id: wamid },
+    });
+  }
+
+  /**
    * GET /{version}/{mediaId} → metadata + URL temporal de descarga.
    * La URL expira en minutos: SIEMPRE se pide fresca en el mismo job que
    * descarga, jamás se persiste.

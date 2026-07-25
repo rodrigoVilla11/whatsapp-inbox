@@ -162,8 +162,41 @@ export class FakeModel {
     return row ? { ...row } : null;
   }
 
-  findMany({ where }: { where?: Row } = {}): Row[] {
-    return this.rows.filter((r) => matchWhere(r, where)).map((r) => ({ ...r }));
+  findMany({
+    where,
+    orderBy,
+    take,
+  }: { where?: Row; orderBy?: Row | Row[]; take?: number } = {}): Row[] {
+    let rows = this.rows.filter((r) => matchWhere(r, where));
+    if (orderBy) {
+      const specs = (Array.isArray(orderBy) ? orderBy : [orderBy]).flatMap((o) =>
+        Object.entries(o).map(([field, dir]) => {
+          const d = isPlainObject(dir) ? dir : { sort: dir };
+          return {
+            field,
+            desc: d.sort === 'desc',
+            nullsLast: d.nulls === 'last' || (d.nulls === undefined && d.sort === 'desc'),
+          };
+        }),
+      );
+      rows = [...rows].sort((a, b) => {
+        for (const spec of specs) {
+          const av = a[spec.field];
+          const bv = b[spec.field];
+          if (av == null && bv == null) continue;
+          if (av == null) return spec.nullsLast ? 1 : -1;
+          if (bv == null) return spec.nullsLast ? -1 : 1;
+          const ca = comparable(av);
+          const cb = comparable(bv);
+          if (ca === cb) continue;
+          const cmp = ca < cb ? -1 : 1;
+          return spec.desc ? -cmp : cmp;
+        }
+        return 0;
+      });
+    }
+    if (take !== undefined) rows = rows.slice(0, take);
+    return rows.map((r) => ({ ...r }));
   }
 
   update({ where, data }: { where: Row; data: Row }): Row {
@@ -205,19 +238,24 @@ export interface FakeDb {
   tenant: FakeModel;
   metaApp: FakeModel;
   whatsappAccount: FakeModel;
+  user: FakeModel;
   webhookEvent: FakeModel;
   contact: FakeModel;
   conversation: FakeModel;
   message: FakeModel;
   messageTemplate: FakeModel;
+  quickReply: FakeModel;
   $transaction<T>(fn: (tx: FakeDb) => Promise<T>): Promise<T>;
 }
 
 export function createFakeDb(): FakeDb {
   const db: FakeDb = {
-    tenant: new FakeModel('ten', { status: 'ACTIVE' }, [['slug']]),
+    tenant: new FakeModel('ten', { status: 'ACTIVE', timezone: 'America/Argentina/Buenos_Aires' }, [['slug']]),
     metaApp: new FakeModel('app', { graphVersion: null }, [['ref'], ['appId']]),
     whatsappAccount: new FakeModel('acc', {}, [['phoneNumberId']]),
+    user: new FakeModel('user', { role: 'AGENT', isActive: true, gourmetifyUserId: null }, [
+      ['tenantId', 'email'],
+    ]),
     webhookEvent: new FakeModel('evt', {
       tenantId: null,
       whatsappAccountId: null,
@@ -278,6 +316,7 @@ export function createFakeDb(): FakeDb {
       { status: 'PENDING', components: null, variableCount: 0, metaTemplateId: null, syncedAt: null },
       [['tenantId', 'whatsappAccountId', 'name', 'language']],
     ),
+    quickReply: new FakeModel('qr', { isActive: true }, [['tenantId', 'shortcut']]),
     $transaction: async (fn) => fn(db),
   };
   return db;

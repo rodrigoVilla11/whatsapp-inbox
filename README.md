@@ -273,6 +273,50 @@ descarga es idempotente → un falso positivo no duplica. `jobId` distinto
 del original (`media-sweep-*`): un job FAILED retenido en Redis no
 bloquearía el rescate por dedup de jobId.
 
+### API del inbox + frontend (fase 7)
+
+**DTOs compartidos** (`src/common/serializers.ts`): REST y WS emiten el
+mismo contrato. `Message` con allowlist (sin raw, pricing, keys de R2 ni
+ids internos de Meta). `Conversation` incluye `isWindowOpen` y
+`windowExpiresAt` **calculados por el servidor** — la UI jamás deriva la
+ventana con su reloj; el countdown es cosmético.
+
+**Endpoints** (tenant-scoped, middleware provisional):
+`GET /me` · `GET /conversations` (cursor keyset por `lastMessageAt`,
+filtros status/assignedToMe, contacto embebido, timezone una vez, 30/pág)
+· `GET /conversations/:id/messages` (cursor por `timestamp` desc, 50/pág)
+· `POST /conversations/:id/read` (unread→0 + evento + **mark-read en Meta
+best-effort** — tildes azules para el cliente) · `POST .../assign` ·
+`POST .../status` · `GET /templates` (solo APPROVED) · CRUD
+`/quick-replies` (shortcut único por tenant, empieza con `/`, delete soft).
+
+**CORS**: `CORS_ORIGINS` (lista por comas) para REST y gateway WS; sin
+setear → abierto con warning (solo dev).
+
+**Frontend** (`web/`, Next.js App Router + Tailwind + zustand):
+
+```
+web/src/
+  app/inbox(/[id])      lista → hilo (3 columnas desktop, navegación mobile)
+  app/settings/quick-replies
+  lib/                  capa de datos: types, api, merge (WS), composer
+                        (máquina de envío), window-ui, store, socket
+  components/           ConversationList, Thread, MessageBubble, Composer,
+                        ContactPanel, WindowBanner, ConnectionBadge
+```
+
+- Merge de eventos WS puro y testeado (`lib/merge.ts`): dedup por id y por
+  `clientDedupKey` (la carrera POST-propio vs WS converge a una copia).
+- Envío optimista con el contrato de fases 4/6 (`lib/composer.ts`): red →
+  misma key (1 auto-retry); FAILED del server → retry con key nueva.
+- Reconexión: refetch REST de lista + hilo antes de confiar en el stream.
+- Techos de media client-side espejados del backend en
+  `lib/media-constants.ts` (elección documentada ahí: constantes, no
+  GET /config — el backend sigue siendo la autoridad).
+
+Correr: `cd web && npm install && npm run dev` (usa
+`NEXT_PUBLIC_API_URL`, default `http://localhost:3001`).
+
 ### Graph API version
 
 Constante `GRAPH_API_VERSION` en `src/whatsapp/graph-api.constants.ts`,
@@ -351,4 +395,5 @@ docker/postgres/init/      # rol app_user (no superuser) + DB
 4. ✅ Envío + ventana de 24h (`isWindowOpen`, 131047/131026/130429)
 5. ✅ Media entrante → R2 + saliente multipart (+ `R2MediaStorage` para retención)
 6. ✅ Gateway WebSocket (Redis pub/sub, rooms por tenant) + barrido de media huérfana
-7. ⬜ Frontend Next.js (3 columnas, tablet-first)
+7. ✅ API del inbox (cursores, read/assign/status, quick replies, CORS)
+   + Frontend Next.js (3 columnas, tablet-first, optimista + WS)
