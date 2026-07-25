@@ -1,0 +1,40 @@
+# Infra de desarrollo. Puertos corridos (5434/6380) para no chocar con
+# otros proyectos locales (gourmetify usa 5432, boxit usa 5433).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: whatsapp-inbox-postgres
+    ports:
+      - '5434:5432'
+    environment:
+      # Superusuario SOLO para administrar el contenedor. La app NUNCA se
+      # conecta con él: los superusuarios saltean RLS, y si nos acostumbramos
+      # a postgres hoy, activar RLS mañana no protege nada.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-inbox-redis
+    ports:
+      - '6380:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:
+  redisdata:

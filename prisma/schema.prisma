@@ -1,0 +1,380 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PLATAFORMA — no lleva tenantId a propósito.
+// El app secret y el verify token son de la Meta App (modelo Tech
+// Provider: una sola app, todos los WABAs cuelgan de ella), no del
+// tenant. La firma del webhook se valida ANTES de poder resolver el
+// tenant desde el payload.
+// ═══════════════════════════════════════════════════════════════════
+
+model MetaApp {
+  id             String   @id @default(cuid())
+  ref            String   @unique // id público para /webhooks/whatsapp/:ref (caso multi-app)
+  name           String
+  appId          String   @unique // Meta App ID
+  appSecretEnc   String // AES-256-GCM, envelope v1.<kv>.<iv>.<tag>.<ct>
+  verifyTokenEnc String // hub.verify_token — NO en .env
+  keyVersion     Int      @default(1)
+  graphVersion   String? // override opcional de GRAPH_API_VERSION
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  accounts WhatsappAccount[]
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TENANT
+// ═══════════════════════════════════════════════════════════════════
+
+model Tenant {
+  id        String       @id @default(cuid())
+  slug      String       @unique // "nova-sushi"
+  name      String
+  timezone  String       @default("America/Argentina/Buenos_Aires")
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // FUTURO Gourmetify: id del tenant en el SaaS, para unificar sin migrar PKs
+  // gourmetifyTenantId String? @unique
+
+  whatsappAccounts WhatsappAccount[]
+  users            User[]
+  contacts         Contact[]
+  conversations    Conversation[]
+  messages         Message[]
+  templates        MessageTemplate[]
+  quickReplies     QuickReply[]
+}
+
+model WhatsappAccount {
+  id        String @id @default(cuid())
+  tenantId  String
+  metaAppId String
+
+  wabaId             String // NO único: un WABA puede tener varios números
+  phoneNumberId      String  @unique // ÚNICO GLOBAL — clave de ruteo del webhook
+  displayPhoneNumber String
+  verifiedName       String?
+  qualityRating      String?
+
+  accessTokenEnc String // cifrado en reposo
+  keyVersion     Int       @default(1)
+  tokenExpiresAt DateTime?
+
+  status        WhatsappAccountStatus @default(PENDING)
+  lastErrorCode Int?
+  lastErrorAt   DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metaApp       MetaApp           @relation(fields: [metaAppId], references: [id])
+  conversations Conversation[]
+  messages      Message[]
+  templates     MessageTemplate[]
+
+  @@index([tenantId])
+  @@index([wabaId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  email        String
+  name         String
+  passwordHash String?
+  role         UserRole @default(AGENT)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Mapeo al usuario del SaaS al integrar con Gourmetify.
+  // La tabla se MANTIENE (no se descarta): mapear vía este campo no toca
+  // ninguna fila del histórico de assignedUserId.
+  gourmetifyUserId String? @unique
+
+  tenant                Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedConversations Conversation[] @relation("AssignedAgent")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DOMINIO DEL INBOX — todo lleva tenantId, indexado, desde el día uno
+// ═══════════════════════════════════════════════════════════════════
+
+model Contact {
+  id          String    @id @default(cuid())
+  tenantId    String
+  waId        String // tal cual lo manda Meta (E.164 sin '+')
+  phoneE164   String? // normalizado, para cruzar con Customer
+  profileName String?
+  notes       String?
+  isBlocked   Boolean   @default(false)
+  deletedAt   DateTime? // soft delete — las lecturas del dominio filtran null por defecto
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // FUTURO Gourmetify: sin FK todavía, se resuelve por phoneE164 y se cachea acá
+  customerId String?
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([tenantId, waId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, phoneE164])
+}
+
+model Conversation {
+  id                String @id @default(cuid())
+  tenantId          String
+  whatsappAccountId String
+  contactId         String
+
+  status         ConversationStatus @default(OPEN)
+  assignedUserId String?
+
+  lastInboundAt      DateTime? // ← ventana de 24h
+  lastOutboundAt     DateTime?
+  lastMessageAt      DateTime? // orden del inbox
+  lastMessagePreview String?
+  unreadCount        Int       @default(0)
+  deletedAt          DateTime? // soft delete
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // FUTURO Gourmetify: pedido asociado a la charla
+  orderId String?
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappAccount WhatsappAccount @relation(fields: [whatsappAccountId], references: [id])
+  contact         Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedUser    User?           @relation("AssignedAgent", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  messages        Message[]
+
+  @@unique([tenantId, whatsappAccountId, contactId])
+  @@index([tenantId, status, lastMessageAt(sort: Desc)])
+  @@index([tenantId, assignedUserId, lastMessageAt(sort: Desc)])
+  @@index([tenantId, lastInboundAt])
+  @@index([tenantId, orderId])
+}
+
+model Message {
+  id                String @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  whatsappAccountId String
+
+  wamid          String? // null mientras está PENDING (antes de llamar a Meta)
+  clientDedupKey String? // idempotencia del envío (retry de BullMQ)
+  direction      MessageDirection
+  type           MessageType      @default(UNSUPPORTED)
+  status         MessageStatus    @default(PENDING)
+
+  body         String?
+  replyToWamid String?
+
+  // Plantillas
+  templateName     String?
+  templateLanguage String?
+  templateParams   Json?
+
+  // Media (se completa en el worker, después de subir a R2)
+  mediaId        String? // media_id de Meta
+  mediaUrl       String? // URL en R2
+  mediaMimeType  String?
+  mediaFilename  String?
+  mediaSizeBytes Int?
+  mediaSha256    String?
+  mediaStatus    MediaStatus?
+
+  // Pricing (objeto pricing de statuses[] — desde oct 2026 Meta cobra
+  // mensajes de servicio; sin esto no hay backfill posible).
+  // Strings tal cual los manda Meta, SIN enums propios: las categorías
+  // cambian con cada actualización de pricing.
+  billable        Boolean?
+  pricingModel    String?
+  pricingCategory String?
+  pricingType     String?
+
+  // Errores de Meta
+  errorCode   Int?
+  errorTitle  String?
+  errorDetail String?
+
+  sentByUserId String?
+  timestamp    DateTime // el que manda Meta
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  failedAt     DateTime?
+  deletedAt    DateTime? // soft delete
+
+  // SOLO se persiste cuando type = UNSUPPORTED o errorCode != null.
+  // Para el resto queda null: el payload original vive en WebhookEvent
+  // hasta su purga. No duplicar todo el contenido en la tabla más caliente.
+  raw Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation    Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  whatsappAccount WhatsappAccount @relation(fields: [whatsappAccountId], references: [id])
+
+  @@unique([tenantId, wamid])
+  @@unique([tenantId, clientDedupKey])
+  @@index([wamid]) // lookup global para soporte/tickets con Meta (el unique compuesto no sirve para buscar por wamid a secas)
+  @@index([tenantId, conversationId, timestamp(sort: Desc)])
+  @@index([tenantId, status])
+  @@index([tenantId, mediaStatus])
+  @@index([tenantId, billable, timestamp]) // "cuánto gastó este tenant este mes" con index scan
+}
+
+model MessageTemplate {
+  id                String         @id @default(cuid())
+  tenantId          String
+  whatsappAccountId String
+  name              String
+  language          String
+  category          String
+  status            TemplateStatus @default(PENDING)
+  bodyText          String
+  components        Json?
+  variableCount     Int            @default(0)
+  metaTemplateId    String?
+  syncedAt          DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappAccount WhatsappAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, whatsappAccountId, name, language])
+  @@index([tenantId, status])
+}
+
+model QuickReply {
+  id        String   @id @default(cuid())
+  tenantId  String
+  shortcut  String // "/carta"
+  title     String
+  body      String // el link del menú vive ACÁ, no en el código
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, shortcut])
+}
+
+// Auditoría de todo lo que llega al webhook. tenantId nullable: acá cae
+// el caso "no encontré la cuenta por phone_number_id, logueo y descarto
+// con 200". Se purga por job (WEBHOOK_RETENTION_DAYS); FAILED se conserva.
+model WebhookEvent {
+  id                String             @id @default(cuid())
+  metaAppId         String?
+  tenantId          String? // null = no se pudo resolver el tenant
+  whatsappAccountId String?
+  phoneNumberId     String?
+  signatureValid    Boolean
+  status            WebhookEventStatus @default(RECEIVED)
+  payload           Json
+  error             String?
+  receivedAt        DateTime           @default(now())
+  processedAt       DateTime?
+
+  @@index([tenantId, receivedAt])
+  @@index([phoneNumberId, receivedAt])
+  @@index([status, receivedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum WhatsappAccountStatus {
+  PENDING
+  ACTIVE
+  TOKEN_EXPIRED
+  DISCONNECTED
+  SUSPENDED
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MediaStatus {
+  PENDING
+  DOWNLOADED
+  FAILED
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAUSED
+  DISABLED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  QUEUED
+  PROCESSED
+  DISCARDED
+  FAILED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  STICKER
+  LOCATION
+  CONTACTS
+  TEMPLATE
+  INTERACTIVE
+  BUTTON
+  REACTION
+  SYSTEM
+  UNSUPPORTED
+}

@@ -1,0 +1,56 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DRAFT — NO APLICADO. Diseño de Row-Level Security para cuando se active.
+-- Vive fuera de prisma/migrations a propósito: Prisma no lo va a ejecutar.
+-- Cuando se decida activar RLS, esto se convierte en una migración real
+-- (prisma migrate dev --create-only + pegar este SQL revisado).
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Precondiciones (ya cumplidas desde el día uno):
+--   1. La app se conecta con app_user (NO superusuario, NO BYPASSRLS).
+--      Los superusuarios saltean RLS silenciosamente.
+--   2. OJO con el OWNER: el dueño de una tabla también saltea RLS salvo que
+--      la tabla tenga FORCE ROW LEVEL SECURITY. En dev app_user es owner
+--      (corre las migraciones), por eso cada tabla lleva FORCE abajo.
+--      En producción, alternativa más limpia: rol de migraciones (owner)
+--      separado del rol de runtime (app_user) — ver README.
+--   3. La app setea el tenant por transacción:
+--        SET LOCAL app.tenant_id = '<tenantId>';
+--      SET LOCAL (no SET a secas) — ver README, sección pooling: con
+--      PgBouncer en transaction mode una SET de sesión se filtra entre
+--      tenants; SET LOCAL muere con la transacción.
+--
+-- current_setting(..., true) devuelve NULL si la variable no está seteada:
+-- la comparación con NULL no matchea ninguna fila → fail-closed sin error.
+--
+-- Tablas del dominio (las mismas cinco del tenant guard de la app):
+--
+-- ALTER TABLE "Contact"         ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE "Contact"         FORCE  ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation ON "Contact"
+--   USING ("tenantId" = current_setting('app.tenant_id', true));
+--
+-- ALTER TABLE "Conversation"    ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE "Conversation"    FORCE  ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation ON "Conversation"
+--   USING ("tenantId" = current_setting('app.tenant_id', true));
+--
+-- ALTER TABLE "Message"         ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE "Message"         FORCE  ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation ON "Message"
+--   USING ("tenantId" = current_setting('app.tenant_id', true));
+--
+-- ALTER TABLE "MessageTemplate" ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE "MessageTemplate" FORCE  ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation ON "MessageTemplate"
+--   USING ("tenantId" = current_setting('app.tenant_id', true));
+--
+-- ALTER TABLE "QuickReply"      ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE "QuickReply"      FORCE  ROW LEVEL SECURITY;
+-- CREATE POLICY tenant_isolation ON "QuickReply"
+--   USING ("tenantId" = current_setting('app.tenant_id', true));
+--
+-- Fuera del alcance de RLS (a propósito):
+--   - Tenant, MetaApp, WebhookEvent: tablas de plataforma.
+--   - WhatsappAccount, User: el webhook y el login necesitan resolverlos
+--     ANTES de conocer el tenant. Si se decide cubrirlas, necesitan una
+--     policy adicional para ese camino (p.ej. rol aparte para el worker).

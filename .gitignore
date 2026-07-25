@@ -1,0 +1,13 @@
+# deps / build
+node_modules/
+dist/
+coverage/
+
+# secretos — NUNCA subir credenciales
+.env
+.env.*
+!.env.example
+
+# misc
+*.log
+.DS_Store
