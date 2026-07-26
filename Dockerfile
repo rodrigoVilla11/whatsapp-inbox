@@ -34,7 +34,10 @@ WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node prisma ./prisma
-COPY --chown=node:node package.json ./
+# src/ viaja a runtime SOLO para el seed (prisma/seed.ts importa el hasher
+# y el cifrado desde src/ y corre con tsx, que está en dependencies).
+COPY --chown=node:node src ./src
+COPY --chown=node:node tsconfig.json package.json ./
 
 USER node
 EXPOSE 3001
