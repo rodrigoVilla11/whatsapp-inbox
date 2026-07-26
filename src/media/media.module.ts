@@ -2,7 +2,7 @@ import { Logger, MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MessagingModule } from '../messaging/messaging.module';
 import { QueueModule } from '../queue/queue.module';
-import { TenantContextMiddleware } from '../tenant/tenant-context.middleware';
+import { SessionAuthMiddleware } from '../auth/session-auth.middleware';
 import { MediaAccessService } from './media-access.service';
 import { MediaController } from './media.controller';
 import { MediaDownloadProcessor } from './media-download.processor';
@@ -45,6 +45,6 @@ import { R2MediaStorage } from './r2-media-storage';
 })
 export class MediaModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(TenantContextMiddleware).forRoutes(MediaController);
+    consumer.apply(SessionAuthMiddleware).forRoutes(MediaController);
   }
 }

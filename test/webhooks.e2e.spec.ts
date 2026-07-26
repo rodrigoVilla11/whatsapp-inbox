@@ -7,7 +7,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Encryption } from '../src/crypto/encryption';
 import { EncryptionService } from '../src/crypto/encryption.service';
-import { configureBodyParsers } from '../src/http/body-parsers';
+import { configureApp } from '../src/http/app-setup';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WEBHOOK_EVENTS_QUEUE } from '../src/queue/queue.constants';
 import { MetaAppsService } from '../src/webhooks/meta-apps.service';
@@ -65,7 +65,7 @@ describe('Webhooks (e2e)', () => {
 
     app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false });
     app.useLogger(false);
-    configureBodyParsers(app);
+    configureApp(app); // prefijo /api + parsers, igual que producción
     await app.init();
     server = app.getHttpServer();
   });
@@ -89,7 +89,7 @@ describe('Webhooks (e2e)', () => {
   describe('GET /webhooks/whatsapp (verificación de Meta)', () => {
     it('devuelve el challenge en TEXTO PLANO, sin comillas JSON', async () => {
       const res = await request(server)
-        .get('/webhooks/whatsapp')
+        .get('/api/webhooks/whatsapp')
         .query({
           'hub.mode': 'subscribe',
           'hub.verify_token': VERIFY_TOKEN,
@@ -103,7 +103,7 @@ describe('Webhooks (e2e)', () => {
 
     it('acepta también la ruta con :ref explícito', async () => {
       const res = await request(server)
-        .get('/webhooks/whatsapp/default')
+        .get('/api/webhooks/whatsapp/default')
         .query({ 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY_TOKEN, 'hub.challenge': '42' })
         .expect(200);
       expect(res.text).toBe('42');
@@ -111,21 +111,21 @@ describe('Webhooks (e2e)', () => {
 
     it('rechaza con 403 el token incorrecto', async () => {
       await request(server)
-        .get('/webhooks/whatsapp')
+        .get('/api/webhooks/whatsapp')
         .query({ 'hub.mode': 'subscribe', 'hub.verify_token': 'nope', 'hub.challenge': 'x' })
         .expect(403);
     });
 
     it('rechaza con 403 un modo distinto de subscribe', async () => {
       await request(server)
-        .get('/webhooks/whatsapp')
+        .get('/api/webhooks/whatsapp')
         .query({ 'hub.mode': 'unsubscribe', 'hub.verify_token': VERIFY_TOKEN, 'hub.challenge': 'x' })
         .expect(403);
     });
 
     it('responde 404 si el :ref no existe (solo en GET)', async () => {
       await request(server)
-        .get('/webhooks/whatsapp/no-existe')
+        .get('/api/webhooks/whatsapp/no-existe')
         .query({ 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY_TOKEN, 'hub.challenge': 'x' })
         .expect(404);
     });
@@ -135,7 +135,7 @@ describe('Webhooks (e2e)', () => {
     const payload = JSON.stringify({ object: 'whatsapp_business_account', entry: [] });
 
     const post = (body: string, headers: Record<string, string> = {}) => {
-      let req = request(server).post('/webhooks/whatsapp').set('content-type', 'application/json');
+      let req = request(server).post('/api/webhooks/whatsapp').set('content-type', 'application/json');
       for (const [k, v] of Object.entries(headers)) req = req.set(k, v);
       return req.send(body);
     };
@@ -185,7 +185,7 @@ describe('Webhooks (e2e)', () => {
 
     it(':ref inexistente → 200 igual (no 404) y evento DISCARDED sin encolar', async () => {
       await request(server)
-        .post('/webhooks/whatsapp/no-existe')
+        .post('/api/webhooks/whatsapp/no-existe')
         .set('content-type', 'application/json')
         .set('x-hub-signature-256', sign(payload))
         .send(payload)

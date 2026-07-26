@@ -15,7 +15,18 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Date);
 }
 
-const OPERATOR_KEYS = ['equals', 'in', 'notIn', 'not', 'lt', 'lte', 'gt', 'gte'];
+const OPERATOR_KEYS = [
+  'equals',
+  'in',
+  'notIn',
+  'not',
+  'lt',
+  'lte',
+  'gt',
+  'gte',
+  'contains',
+  'startsWith',
+];
 
 function isOperatorObject(v: unknown): v is Record<string, unknown> {
   return isPlainObject(v) && Object.keys(v).some((k) => OPERATOR_KEYS.includes(k));
@@ -45,6 +56,13 @@ function matchOperator(rowValue: unknown, op: Record<string, unknown>): boolean 
     } else if (valueEquals(rowValue, n)) {
       return false;
     }
+  }
+  if ('contains' in op || 'startsWith' in op) {
+    // Semántica Prisma: mode 'insensitive' → ILIKE. NULL nunca matchea.
+    if (typeof rowValue !== 'string') return false;
+    const fold = (s: string): string => (op.mode === 'insensitive' ? s.toLowerCase() : s);
+    if ('contains' in op && !fold(rowValue).includes(fold(String(op.contains)))) return false;
+    if ('startsWith' in op && !fold(rowValue).startsWith(fold(String(op.startsWith)))) return false;
   }
   if ('lt' in op && !(rowValue != null && comparable(rowValue) < comparable(op.lt))) return false;
   if ('lte' in op && !(rowValue != null && comparable(rowValue) <= comparable(op.lte))) return false;
@@ -239,6 +257,7 @@ export interface FakeDb {
   metaApp: FakeModel;
   whatsappAccount: FakeModel;
   user: FakeModel;
+  session: FakeModel;
   webhookEvent: FakeModel;
   contact: FakeModel;
   conversation: FakeModel;
@@ -253,9 +272,18 @@ export function createFakeDb(): FakeDb {
     tenant: new FakeModel('ten', { status: 'ACTIVE', timezone: 'America/Argentina/Buenos_Aires' }, [['slug']]),
     metaApp: new FakeModel('app', { graphVersion: null }, [['ref'], ['appId']]),
     whatsappAccount: new FakeModel('acc', {}, [['phoneNumberId']]),
-    user: new FakeModel('user', { role: 'AGENT', isActive: true, gourmetifyUserId: null }, [
-      ['tenantId', 'email'],
-    ]),
+    user: new FakeModel(
+      'user',
+      {
+        role: 'AGENT',
+        isActive: true,
+        gourmetifyUserId: null,
+        passwordHash: null,
+        mustChangePassword: false,
+      },
+      [['tenantId', 'email']],
+    ),
+    session: new FakeModel('ses', { userAgent: null }, [['tokenHash']]),
     webhookEvent: new FakeModel('evt', {
       tenantId: null,
       whatsappAccountId: null,

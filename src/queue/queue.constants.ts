@@ -35,3 +35,10 @@ export const PURGE_WEBHOOK_EVENTS_CRON = '0 4 * * *';
 export const ORPHAN_MEDIA_SWEEP_JOB = 'rescue-orphan-media';
 export const ORPHAN_MEDIA_SWEEP_EVERY_MS = 15 * 60 * 1000; // cada 15 min
 export const ORPHAN_MEDIA_MIN_AGE_MS = 30 * 60 * 1000; // PENDING de más de 30 min
+
+/**
+ * Barrido de sesiones vencidas (fase 10): las que se tocan se limpian
+ * solas al validar; esto borra las ABANDONADAS (nadie volvió a usarlas).
+ */
+export const SESSION_SWEEP_JOB = 'sweep-expired-sessions';
+export const SESSION_SWEEP_CRON = '30 4 * * *'; // diario, 04:30

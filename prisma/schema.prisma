@@ -91,9 +91,12 @@ model User {
   tenantId     String
   email        String
   name         String
-  passwordHash String?
+  passwordHash String? // argon2id; null = todavía no puede loguearse
   role         UserRole @default(AGENT)
   isActive     Boolean  @default(true)
+  // Alta por un admin: password inicial comunicada por fuera → cambio
+  // forzado en el primer login.
+  mustChangePassword Boolean @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -104,9 +107,31 @@ model User {
 
   tenant                Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assignedConversations Conversation[] @relation("AssignedAgent")
+  sessions              Session[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
+}
+
+// Sesión por cookie (fase 8). El id que viaja en la cookie es un token
+// opaco de 256 bits que acá se guarda HASHEADO (sha256): un dump de la
+// tabla no sirve para fabricar cookies. Expiración sliding de 30 días.
+// Fuera del tenant-guard a propósito: la sesión se busca por tokenHash
+// ANTES de conocer el tenant (igual que User en el login).
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  tenantId   String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId]) // "cerrar todas las sesiones" del usuario
+  @@index([expiresAt]) // barrido de vencidas
 }
 
 // ═══════════════════════════════════════════════════════════════════

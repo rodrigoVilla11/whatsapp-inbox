@@ -7,8 +7,9 @@ import {
 } from '@nestjs/websockets';
 import IORedis from 'ioredis';
 import type { Namespace, Socket } from 'socket.io';
+import { parseCookies, SESSION_COOKIE } from '../auth/cookies';
+import { SessionsService } from '../auth/sessions.service';
 import { corsOrigins } from '../http/cors';
-import { TenantContextService } from '../tenant/tenant-context.service';
 import { DOMAIN_EVENTS_CHANNEL, DomainEvent, tenantRoom } from './domain-events';
 
 /**
@@ -23,6 +24,9 @@ import { DOMAIN_EVENTS_CHANNEL, DomainEvent, tenantRoom } from './domain-events'
  */
 @WebSocketGateway({
   namespace: '/inbox',
+  // Un solo origen (fase 10b): el handshake de socket.io vive bajo /api
+  // para que el proxy lo rutee al servicio API con una sola regla de path.
+  path: '/api/socket.io',
   // corsOrigins() lee env al evaluar el decorador — main.ts importa
   // dotenv/config antes que AppModule para que ya esté cargado.
   cors: { origin: corsOrigins(), credentials: true },
@@ -37,7 +41,7 @@ export class InboxGateway implements OnGatewayConnection, OnModuleInit, OnModule
 
   constructor(
     private readonly config: ConfigService,
-    private readonly tenantContext: TenantContextService,
+    private readonly sessions: SessionsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -52,6 +56,13 @@ export class InboxGateway implements OnGatewayConnection, OnModuleInit, OnModule
   }
 
   async onModuleDestroy(): Promise<void> {
+    // Shutdown (paso 2 de http/shutdown.ts): echar a los clientes AVISANDO
+    // (disparan su reconexión y refetch REST al volver) y cerrar el sub.
+    try {
+      this.server?.disconnectSockets?.(true);
+    } catch {
+      // el server puede no existir en tests unitarios — nada que cerrar
+    }
     await this.subscriber?.quit().catch(() => this.subscriber?.disconnect());
   }
 
@@ -69,21 +80,37 @@ export class InboxGateway implements OnGatewayConnection, OnModuleInit, OnModule
   }
 
   /**
-   * Auth del handshake. TODO(auth): mismo provisional que REST — cuando
-   * entre auth real, acá se valida el token del handshake. El tenant sale
-   * SIEMPRE de la resolución server-side, jamás de un parámetro que el
-   * cliente elige; socket.io no permite joins desde el cliente y este
-   * gateway no expone ningún mensaje de join.
+   * Auth del handshake (fase 8): la MISMA cookie de sesión que REST — llega
+   * en los headers del upgrade. Sin sesión válida → desconexión antes de
+   * unirse a ningún room. El room sale SIEMPRE del tenant de la sesión,
+   * jamás de un parámetro que el cliente elige; socket.io no permite joins
+   * desde el cliente y este gateway no expone ningún mensaje de join.
    */
   async handleConnection(socket: Socket): Promise<void> {
     try {
-      const context = await this.tenantContext.resolveDefault();
-      if (!context) {
-        this.logger.warn(`Conexión sin tenant resoluble: ${socket.id} — desconectado`);
+      const cookieHeader = socket.handshake.headers.cookie;
+      const token = parseCookies(cookieHeader)[SESSION_COOKIE];
+      const result = await this.sessions.inspect(token);
+      if (!result.ok) {
+        // DIAGNÓSTICO temporal (fase 8): distinguir QUÉ falló, no adivinar.
+        // - 'no-token' y el header ni siquiera llegó → el cliente no manda
+        //   cookies (withCredentials del cliente socket.io, o un proxy que
+        //   se come el header Cookie en el upgrade).
+        // - 'no-token' con header presente → llega Cookie pero no la nuestra
+        //   (nombre/dominio/SameSite).
+        // - 'unknown-token' / 'expired' / 'user-inactive' → la cookie llega
+        //   bien y es la sesión la que no sirve.
+        const detail =
+          result.reason === 'no-token'
+            ? cookieHeader
+              ? `cookie header presente pero SIN "${SESSION_COOKIE}" (nombres: ${Object.keys(parseCookies(cookieHeader)).join(', ') || 'ninguno'})`
+              : 'header Cookie AUSENTE en el upgrade (¿withCredentials del cliente? ¿proxy?)'
+            : `cookie presente, sesión rechazada: ${result.reason}`;
+        this.logger.warn(`Handshake rechazado [${socket.id}]: ${detail}`);
         socket.disconnect(true);
         return;
       }
-      await socket.join(tenantRoom(context.tenantId));
+      await socket.join(tenantRoom(result.session.tenantId));
     } catch (error) {
       this.logger.error(`handleConnection: ${String(error)}`);
       socket.disconnect(true);

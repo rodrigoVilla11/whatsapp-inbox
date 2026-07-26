@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
-import { getTenantContext } from '../tenant/tenant-context.middleware';
+import { getTenantContext } from '../tenant/tenant-context';
 import { absoluteMaxBytes } from './media-limits';
 import { MediaAccessService } from './media-access.service';
 import { OutboundMediaService } from './outbound-media.service';

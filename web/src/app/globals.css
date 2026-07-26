@@ -1,10 +1,76 @@
 @import 'tailwindcss';
 
+/*
+ * ═══ Design tokens — fase 9a ═══
+ *
+ * Núcleo de SEIS colores (--core-*). Todo lo demás deriva por color-mix:
+ * theming por tenant en Gourmetify = sobrescribir estas seis variables
+ * (otro tenant, otra paleta, mismo sistema).
+ *
+ * Regla un-color-un-significado:
+ *   nori   → marca + "podés responder" (ventana abierta)
+ *   gari   → urgencia, EXCLUSIVO: ventana por vencer, FAILED, sin conexión
+ *   piedra → EXCEPCIÓN DELIBERADA (colapso semántico aceptado): ventana
+ *            cerrada + texto secundario + deshabilitado. "Cerrado" e
+ *            "inactivo" son la misma familia. Cuidado con el único caso
+ *            ambiguo: un control deshabilitado DENTRO de una conversación
+ *            con ventana abierta se diferencia por OPACIDAD (disabled:opacity-*),
+ *            nunca tiñéndolo de piedra — que no se lea como "algo cerró".
+ */
 :root {
   color-scheme: light;
+  --core-ceramic: #f4f0e8; /* fondo de app */
+  --core-rice: #fdfbf6; /* superficies elevadas */
+  --core-sumi: #26221b; /* tinta */
+  --core-nori: #1f3d2c; /* marca + ventana abierta */
+  --core-gari: #c9553b; /* urgencia (exclusivo) */
+  --core-piedra: #837d71; /* cerrado / secundario / deshabilitado */
+}
+
+@theme inline {
+  --color-ceramic: var(--core-ceramic);
+  --color-rice: var(--core-rice);
+  --color-sumi: var(--core-sumi);
+  --color-nori: var(--core-nori);
+  --color-gari: var(--core-gari);
+  --color-piedra: var(--core-piedra);
+
+  /* Derivados (no son tokens nuevos: se calculan del núcleo) */
+  --color-nori-soft: color-mix(in oklab, var(--core-nori) 10%, var(--core-rice));
+  --color-nori-mist: color-mix(in oklab, var(--core-nori) 18%, var(--core-rice));
+  --color-nori-deep: color-mix(in oklab, var(--core-nori) 80%, black);
+  --color-gari-soft: color-mix(in oklab, var(--core-gari) 13%, var(--core-rice));
+  --color-gari-ink: color-mix(in oklab, var(--core-gari) 70%, black); /* AA sobre claro */
+  --color-piedra-soft: color-mix(in oklab, var(--core-piedra) 15%, var(--core-rice));
+  --color-line: color-mix(in oklab, var(--core-sumi) 12%, var(--core-ceramic));
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, 'Cascadia Mono', monospace;
 }
 
 html,
 body {
   height: 100%;
+}
+
+/* Foco visible universal: nada navegable sin anillo. */
+:focus-visible {
+  outline: 2px solid var(--core-nori);
+  outline-offset: 2px;
+}
+
+/* Datos que corren (horas, countdowns) no bailan al refrescar. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

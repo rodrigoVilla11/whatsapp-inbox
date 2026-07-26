@@ -27,6 +27,28 @@ export function listTimestamp(iso: string, timezone: string, now: Date = new Dat
   return sameDay ? formatTime(iso, timezone) : formatDay(iso, timezone);
 }
 
+/**
+ * Hora relativa "inteligente" de la lista: "ahora", "5 min", "18:31" (hoy),
+ * "ayer", "vie" (últimos 7 días), "26/07" (más viejo). Timezone del tenant.
+ */
+export function relativeListTime(iso: string, timezone: string, now: Date = new Date()): string {
+  const diffMs = now.getTime() - new Date(iso).getTime();
+  if (diffMs < 60_000) return 'ahora'; // incluye relojes corridos (diff negativo)
+  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} min`;
+
+  const dayOf = (d: Date): string =>
+    new Intl.DateTimeFormat('en-CA', { dateStyle: 'short', timeZone: timezone }).format(d);
+  const then = new Date(iso);
+  if (dayOf(then) === dayOf(now)) return formatTime(iso, timezone);
+  if (dayOf(then) === dayOf(new Date(now.getTime() - 86_400_000))) return 'ayer';
+  if (diffMs < 7 * 86_400_000) {
+    return new Intl.DateTimeFormat('es-AR', { weekday: 'short', timeZone: timezone })
+      .format(then)
+      .replace('.', '');
+  }
+  return formatDay(iso, timezone);
+}
+
 export function formatBytes(bytes: number | null): string {
   if (bytes === null) return '';
   if (bytes < 1024) return `${bytes} B`;

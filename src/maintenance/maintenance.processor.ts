@@ -1,11 +1,13 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import type { Job } from 'bullmq';
+import { SessionsService } from '../auth/sessions.service';
 import { MediaSweepService } from '../media/media-sweep.service';
 import {
   MAINTENANCE_QUEUE,
   ORPHAN_MEDIA_SWEEP_JOB,
   PURGE_WEBHOOK_EVENTS_JOB,
+  SESSION_SWEEP_JOB,
 } from '../queue/queue.constants';
 import { RetentionService } from '../retention/retention.service';
 
@@ -16,6 +18,7 @@ export class MaintenanceProcessor extends WorkerHost {
   constructor(
     private readonly retention: RetentionService,
     private readonly mediaSweep: MediaSweepService,
+    private readonly sessions: SessionsService, // del AuthModule global
   ) {
     super();
   }
@@ -28,6 +31,11 @@ export class MaintenanceProcessor extends WorkerHost {
       case ORPHAN_MEDIA_SWEEP_JOB:
         await this.mediaSweep.rescueOrphans();
         return;
+      case SESSION_SWEEP_JOB: {
+        const swept = await this.sessions.deleteExpired();
+        if (swept > 0) this.logger.log(`Sesiones vencidas barridas: ${swept}`);
+        return;
+      }
       default:
         this.logger.warn(`Job de mantenimiento desconocido: ${job.name}`);
     }

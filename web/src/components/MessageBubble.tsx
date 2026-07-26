@@ -12,48 +12,49 @@ function Ticks({ message }: { message: Message }) {
   switch (message.status) {
     case 'PENDING':
       return (
-        <span className={`${base} text-stone-400`} aria-label="Enviando" title="Enviando">
+        <span className={`${base} text-rice/60`} aria-label="Enviando" title="Enviando">
           🕐
         </span>
       );
     case 'SENT':
       return (
-        <span className={`${base} text-stone-500`} aria-label="Enviado">
+        <span className={`${base} text-rice/70`} aria-label="Enviado">
           ✓
         </span>
       );
     case 'DELIVERED':
       return (
-        <span className={`${base} text-stone-500`} aria-label="Entregado">
+        <span className={`${base} text-rice/70`} aria-label="Entregado">
           ✓✓
         </span>
       );
     case 'READ':
+      // la convención azul de WhatsApp — la cajera ya la sabe leer
       return (
-        <span className={`${base} font-bold text-sky-500`} aria-label="Leído">
+        <span className={`${base} font-bold text-sky-300`} aria-label="Leído">
           ✓✓
         </span>
       );
     case 'FAILED':
       return (
-        <span className={`${base} text-red-600`} aria-label="Falló">
+        <span className={`${base} text-gari`} aria-label="Falló">
           ⚠
         </span>
       );
   }
 }
 
-function Media({ message }: { message: Message }) {
+function Media({ message, outbound }: { message: Message; outbound: boolean }) {
   if (message.mediaStatus === 'PENDING') {
     return (
-      <div className="flex h-32 w-48 animate-pulse items-center justify-center rounded-lg bg-stone-200 text-xs text-stone-500">
+      <div className="flex h-32 w-48 animate-pulse items-center justify-center rounded-xl bg-piedra-soft text-xs text-piedra">
         Descargando…
       </div>
     );
   }
   if (message.mediaStatus === 'FAILED') {
     return (
-      <div className="flex h-20 w-48 items-center justify-center rounded-lg bg-stone-100 text-xs text-stone-500">
+      <div className="flex h-20 w-48 items-center justify-center rounded-xl bg-piedra-soft text-xs text-piedra">
         Archivo no disponible
       </div>
     );
@@ -65,7 +66,7 @@ function Media({ message }: { message: Message }) {
       <img
         src={url}
         alt={message.body ?? 'Imagen recibida'}
-        className="max-h-64 max-w-full rounded-lg object-cover"
+        className="max-h-64 max-w-full rounded-xl object-cover"
         loading="lazy"
       />
     );
@@ -74,7 +75,7 @@ function Media({ message }: { message: Message }) {
     return <audio controls src={url} className="max-w-full" aria-label="Audio" />;
   }
   if (message.type === 'VIDEO') {
-    return <video controls src={url} className="max-h-64 max-w-full rounded-lg" />;
+    return <video controls src={url} className="max-h-64 max-w-full rounded-xl" />;
   }
   // Documento: tarjeta con nombre + tamaño + descarga
   return (
@@ -82,55 +83,93 @@ function Media({ message }: { message: Message }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="flex min-h-12 items-center gap-2 rounded-lg bg-black/5 px-3 py-2 text-sm hover:bg-black/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600"
+      className={`flex min-h-12 items-center gap-2 rounded-xl px-3 py-2 text-sm ${
+        outbound ? 'bg-white/10 hover:bg-white/20' : 'bg-sumi/5 hover:bg-sumi/10'
+      }`}
     >
       <span aria-hidden>📄</span>
       <span className="min-w-0">
         <span className="block truncate font-medium">{message.mediaFilename ?? 'Documento'}</span>
-        <span className="text-xs text-stone-500">{formatBytes(message.mediaSizeBytes)}</span>
+        <span className={`text-xs ${outbound ? 'text-rice/70' : 'text-piedra'}`}>
+          {formatBytes(message.mediaSizeBytes)}
+        </span>
       </span>
-      <span className="ml-auto text-xs font-medium text-emerald-700">Descargar</span>
+      <span
+        className={`ml-auto text-xs font-medium ${outbound ? 'text-rice underline' : 'text-nori'}`}
+      >
+        Descargar
+      </span>
     </a>
   );
 }
 
+/**
+ * `last`: última burbuja de un grupo de consecutivas del mismo autor —
+ * solo ella lleva hora + tildes y la esquina "cola" (9b).
+ */
 export function MessageBubble({
   message,
   quoted,
   reactions,
+  last = true,
 }: {
   message: Message;
   quoted?: Message | null;
   reactions?: string[];
+  last?: boolean;
 }) {
   const timezone = useInbox((s) => s.timezone);
   const retrySend = useInbox((s) => s.retrySend);
+  const users = useInbox((s) => s.users);
   const uploadProgress = useInbox((s) =>
     message.clientDedupKey ? s.uploadProgress[message.clientDedupKey] : undefined,
   );
   const outbound = message.direction === 'OUTBOUND';
+  // Quién respondió (sentByUserId sale de la sesión real desde fase 8) —
+  // importa cuando atienden varios: la cajera y el dueño se distinguen.
+  const senderName =
+    outbound && message.sentByUserId
+      ? (users.find((u) => u.id === message.sentByUserId)?.name ?? null)
+      : null;
   const hasMedia = ['IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT', 'STICKER'].includes(message.type);
+  const hasReactions = !!reactions && reactions.length > 0;
+
+  const corners = outbound
+    ? last
+      ? 'rounded-2xl rounded-br-sm'
+      : 'rounded-2xl'
+    : last
+      ? 'rounded-2xl rounded-bl-sm'
+      : 'rounded-2xl';
 
   return (
     <div className={`flex ${outbound ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`relative max-w-[80%] rounded-2xl px-3 py-2 shadow-sm md:max-w-[65%] ${
-          outbound ? 'rounded-br-sm bg-emerald-100' : 'rounded-bl-sm bg-white'
-        }`}
+        className={`relative max-w-[80%] px-3 py-2 shadow-sm md:max-w-[65%] ${corners} ${
+          outbound ? 'bg-nori text-rice' : 'border border-line bg-rice text-sumi'
+        } ${hasReactions ? 'mb-3' : ''}`}
       >
         {quoted && (
-          <div className="mb-1 rounded-lg border-l-4 border-emerald-500 bg-black/5 px-2 py-1 text-xs text-stone-600">
+          <div
+            className={`mb-1 rounded-lg border-l-4 px-2 py-1 text-xs ${
+              outbound
+                ? 'border-rice/40 bg-white/10 text-rice/80'
+                : 'border-nori/50 bg-sumi/5 text-sumi/70'
+            }`}
+          >
             <span className="line-clamp-2">{quoted.body ?? `[${quoted.type.toLowerCase()}]`}</span>
           </div>
         )}
 
-        {hasMedia && <Media message={message} />}
+        {hasMedia && <Media message={message} outbound={outbound} />}
 
         {message.body && (
-          <p className="whitespace-pre-wrap break-words text-[15px]">{message.body}</p>
+          <p className="whitespace-pre-wrap wrap-break-word text-[15px]">{message.body}</p>
         )}
         {message.type === 'TEMPLATE' && (
-          <p className="mt-0.5 text-[11px] text-stone-500">Plantilla: {message.templateName}</p>
+          <p className={`mt-0.5 text-[11px] ${outbound ? 'text-rice/60' : 'text-piedra'}`}>
+            Plantilla: {message.templateName}
+          </p>
         )}
 
         {typeof uploadProgress === 'number' && (
@@ -140,36 +179,46 @@ export function MessageBubble({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label="Subiendo archivo"
-            className="mt-1 h-1.5 w-full overflow-hidden rounded bg-stone-200"
+            className={`mt-1 h-1.5 w-full overflow-hidden rounded ${outbound ? 'bg-white/20' : 'bg-piedra-soft'}`}
           >
-            <div className="h-full bg-emerald-600 transition-all" style={{ width: `${uploadProgress}%` }} />
+            <div
+              className={`h-full transition-all ${outbound ? 'bg-rice' : 'bg-nori'}`}
+              style={{ width: `${uploadProgress}%` }}
+            />
           </div>
         )}
 
-        <div className="mt-0.5 flex items-center justify-end gap-1 text-[11px] text-stone-500">
-          <span>{formatTime(message.timestamp, timezone)}</span>
-          <Ticks message={message} />
-        </div>
+        {last && (
+          <div
+            className={`tnum mt-0.5 flex items-center justify-end gap-1 font-mono text-[11px] ${
+              outbound ? 'text-rice/70' : 'text-piedra'
+            }`}
+          >
+            {senderName && <span className="truncate font-sans">{senderName} ·</span>}
+            <span>{formatTime(message.timestamp, timezone)}</span>
+            <Ticks message={message} />
+          </div>
+        )}
 
         {/* FAILED: userMessage del dominio (nunca el código crudo) + reintentar */}
         {message.status === 'FAILED' && outbound && (
-          <div className="mt-1 rounded-lg bg-red-50 px-2 py-1.5">
-            <p className="text-xs text-red-700">
+          <div className="mt-1 rounded-xl bg-gari-soft px-2 py-1.5">
+            <p className="text-xs font-medium text-gari-ink">
               {message._local === 'failed-network'
                 ? 'Sin conexión con el servidor. Reintentá.'
                 : (message.errorDetail ?? message.errorTitle ?? 'No se pudo enviar el mensaje.')}
             </p>
             <button
               onClick={() => void retrySend(message)}
-              className="mt-1 min-h-10 rounded-lg bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700"
+              className="mt-1 min-h-10 rounded-lg bg-gari px-3 text-xs font-semibold text-white hover:bg-gari-ink"
             >
               Reintentar
             </button>
           </div>
         )}
 
-        {reactions && reactions.length > 0 && (
-          <div className="absolute -bottom-3 right-2 rounded-full border border-stone-200 bg-white px-1.5 py-0.5 text-sm shadow-sm">
+        {hasReactions && (
+          <div className="absolute -bottom-3 right-2 rounded-full border border-line bg-rice px-1.5 py-0.5 text-sm text-sumi shadow-sm">
             {reactions.join(' ')}
           </div>
         )}

@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Contact, Conversation, Prisma } from '@prisma/client';
-import { serializeConversation, serializeMessage } from '../common/serializers';
+import { serializeContact, serializeConversation, serializeMessage } from '../common/serializers';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 import { GraphApiClient } from '../whatsapp/graph-api.client';
@@ -32,22 +32,41 @@ export class ConversationsService {
   async list(
     tenantId: string,
     userId: string | null,
-    options: { filter?: ConversationListFilter; assignedToMe?: boolean; cursor?: string },
+    options: {
+      filter?: ConversationListFilter;
+      assignedToMe?: boolean;
+      cursor?: string;
+      q?: string;
+    },
   ): Promise<{ conversations: unknown[]; nextCursor: string | null; timezone: string }> {
     const db = this.prisma.db;
     const cursor = decodeCursor(options.cursor);
+    const q = options.q?.trim() || null;
 
-    const statusWhere: Prisma.ConversationWhereInput =
-      options.filter === 'all'
+    // Búsqueda: cruza TODOS los estados (quien busca "María" quiere
+    // encontrarla aunque la conversación esté cerrada); sin q, rige el filtro.
+    const statusWhere: Prisma.ConversationWhereInput = q
+      ? {}
+      : options.filter === 'all'
         ? {}
         : options.filter === 'closed'
           ? { status: 'CLOSED' }
           : { status: { in: ['OPEN', 'PENDING'] } }; // default
 
+    let searchContactIds: string[] | null = null;
+    if (q) {
+      searchContactIds = (await this.searchContacts(tenantId, q)).map((c) => c.id);
+      if (searchContactIds.length === 0) {
+        const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
+        return { conversations: [], nextCursor: null, timezone: tenant?.timezone ?? 'UTC' };
+      }
+    }
+
     const rows = (await db.conversation.findMany({
       where: {
         tenantId,
         ...statusWhere,
+        ...(searchContactIds ? { contactId: { in: searchContactIds } } : {}),
         ...(options.assignedToMe && userId ? { assignedUserId: userId } : {}),
         ...(cursor ? { AND: [this.cursorWhere(cursor, 'lastMessageAt')] } : {}),
       },
@@ -167,7 +186,45 @@ export class ConversationsService {
     return this.emitAndReturn(tenantId, conversationId);
   }
 
+  /** PATCH /contacts/:id — SOLO notes. '' se guarda como null. */
+  async updateContactNotes(
+    tenantId: string,
+    contactId: string,
+    notes: string | null,
+  ): Promise<unknown> {
+    const db = this.prisma.db;
+    const existing = await db.contact.findFirst({ where: { id: contactId, tenantId } });
+    if (!existing) {
+      throw new NotFoundException(`Contacto ${contactId} no existe`);
+    }
+    await db.contact.updateMany({
+      where: { id: contactId, tenantId },
+      data: { notes: notes?.trim() ? notes : null },
+    });
+    const fresh = await db.contact.findFirst({ where: { id: contactId, tenantId } });
+    return serializeContact(fresh as Contact);
+  }
+
   // ────────────────────────────────────────────────────────────────────
+
+  /**
+   * ILIKE %q% sobre profileName; si q trae dígitos, también sobre
+   * phoneE164/waId (normalizado: "+54 9 341" matchea el waId "549341…").
+   * Índices trigram de la migración contact_search_trgm.
+   */
+  private async searchContacts(tenantId: string, q: string): Promise<Contact[]> {
+    const digits = q.replace(/\D/g, '');
+    const or: Prisma.ContactWhereInput[] = [
+      { profileName: { contains: q, mode: 'insensitive' } },
+    ];
+    if (digits.length > 0) {
+      or.push({ phoneE164: { contains: digits } }, { waId: { contains: digits } });
+    }
+    return (await this.prisma.db.contact.findMany({
+      where: { tenantId, OR: or },
+      take: 200, // techo defensivo: la búsqueda alimenta una lista, no un export
+    })) as Contact[];
+  }
 
   private cursorWhere(cursor: Cursor, field: 'lastMessageAt' | 'timestamp'): object {
     const t = cursor.t ? new Date(cursor.t) : null;

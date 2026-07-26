@@ -13,6 +13,8 @@ import { Prisma } from '@prisma/client';
  * - WhatsappAccount: el webhook la busca por phoneNumberId global PARA
  *   resolver el tenant — no puede exigir lo que está tratando de averiguar.
  * - User: el login busca por email antes de conocer el tenant.
+ * - Session: se busca por tokenHash ANTES de conocer el tenant (es la que
+ *   RESPONDE cuál es el tenant); el scoping del dominio arranca después.
  */
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Contact',

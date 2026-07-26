@@ -12,6 +12,7 @@
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '../src/auth/passwords';
 import { Encryption } from '../src/crypto/encryption';
 
 const prisma = new PrismaClient();
@@ -105,21 +106,39 @@ async function main(): Promise<void> {
     },
   });
 
-  // ── Usuario owner (auth llega en fase posterior; passwordHash null) ─────
-  const ownerEmail = process.env.SEED_OWNER_EMAIL?.trim() ?? 'owner@nova-sushi.local';
-  await prisma.user.upsert({
+  // ── Usuario owner ───────────────────────────────────────────────────────
+  // SEED_OWNER_PASSWORD presente → se hashea (argon2id) y actualiza; ausente
+  // → no se toca lo existente (y un owner nuevo queda SIN poder loguearse
+  // hasta re-seedear con password). El owner conoce su password: sin
+  // mustChangePassword.
+  // `||` y no `??`: SEED_OWNER_EMAIL= (vacía) también debe caer al default —
+  // con ?? se creaba un owner con email '' imposible de loguear.
+  const ownerEmail = (process.env.SEED_OWNER_EMAIL?.trim() || 'owner@nova-sushi.local')
+    .toLowerCase();
+  const ownerPassword = process.env.SEED_OWNER_PASSWORD?.trim();
+  const ownerHash = ownerPassword ? await hashPassword(ownerPassword) : null;
+
+  // Sanar el daño de ese bug si ya existe: renombrar al owner con email ''
+  // (en vez de dejar un OWNER fantasma y crear otro).
+  await prisma.user.updateMany({
+    where: { tenantId: tenant.id, role: 'OWNER', email: '' },
+    data: { email: ownerEmail },
+  });
+
+  const owner = await prisma.user.upsert({
     where: { tenantId_email: { tenantId: tenant.id, email: ownerEmail } },
     create: {
       tenantId: tenant.id,
       email: ownerEmail,
       name: 'Nova Sushi Owner',
       role: 'OWNER',
+      passwordHash: ownerHash,
     },
-    update: {},
+    update: ownerHash ? { passwordHash: ownerHash } : {},
   });
 
   // ── Respuesta rápida /carta (el link del menú es DATO por-tenant) ───────
-  const menuUrl = process.env.SEED_MENU_URL?.trim() ?? 'https://TODO-link-carta-nova-sushi';
+  const menuUrl = process.env.SEED_MENU_URL?.trim() || 'https://TODO-link-carta-nova-sushi';
   await prisma.quickReply.upsert({
     where: { tenantId_shortcut: { tenantId: tenant.id, shortcut: '/carta' } },
     create: {
@@ -146,6 +165,12 @@ async function main(): Promise<void> {
     console.warn(
       '  ⚠ Hay credenciales placeholder (SEED_* vacías en .env): la cuenta quedó PENDING. ' +
         'Completá las SEED_* reales y volvé a correr `npm run db:seed`.',
+    );
+  }
+  if (!owner.passwordHash) {
+    console.warn(
+      `  ⚠ El owner (${ownerEmail}) NO tiene contraseña: no puede iniciar sesión. ` +
+        'Seteá SEED_OWNER_PASSWORD (mínimo 10 caracteres) y volvé a correr `npm run db:seed`.',
     );
   }
 }

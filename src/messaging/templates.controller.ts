@@ -1,6 +1,7 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-import { getTenantContext } from '../tenant/tenant-context.middleware';
+import { MinRole, RolesGuard } from '../auth/roles';
+import { getTenantContext } from '../tenant/tenant-context';
 import { TemplateSyncService, TemplateSyncResult } from './template-sync.service';
 
 /**
@@ -8,11 +9,13 @@ import { TemplateSyncService, TemplateSyncResult } from './template-sync.service
  * El schedule automático no existe todavía (a propósito).
  */
 @Controller('templates')
+@UseGuards(RolesGuard)
 export class TemplatesController {
   constructor(private readonly sync: TemplateSyncService) {}
 
   /** POST /templates/sync — body opcional: { whatsappAccountId } */
   @Post('sync')
+  @MinRole('ADMIN')
   async syncTemplates(
     @Body() body: { whatsappAccountId?: string } | undefined,
     @Req() req: Request,

@@ -1,0 +1,13 @@
+# Contexto del Dockerfile de la API (raíz del repo)
+node_modules
+dist
+web
+test
+docs
+.git
+.env
+.env.*
+!.env.production.example
+*.md
+docker-compose.yml
+scripts

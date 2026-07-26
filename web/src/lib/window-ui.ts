@@ -6,6 +6,12 @@
  */
 
 export const EXPIRING_THRESHOLD_MS = 2 * 60 * 60 * 1000; // < 2h → aviso
+export const WINDOW_TOTAL_MS = 24 * 60 * 60 * 1000;
+
+/** Fracción restante de la ventana (0..1) — cosmética, para la barra. */
+export function windowFraction(msLeft: number): number {
+  return Math.max(0, Math.min(1, msLeft / WINDOW_TOTAL_MS));
+}
 
 export type WindowMode = 'open' | 'expiring' | 'closed';
 

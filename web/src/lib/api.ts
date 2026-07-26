@@ -1,5 +1,9 @@
 import type {
+  AgentUser,
+  AuthUser,
+  Contact,
   Conversation,
+  ManagedUser,
   Me,
   Message,
   QuickReply,
@@ -7,70 +11,217 @@ import type {
   Template,
 } from './types';
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+/**
+ * UN SOLO ORIGEN (fase 10b): en producción el frontend llama con rutas
+ * RELATIVAS (/api/...) — mismo dominio, cero CORS, cookie sin Domain.
+ * NEXT_PUBLIC_API_ORIGIN existe SOLO para dev (web :3000 → api :3001,
+ * seteada en web/.env.development); en producción no se define.
+ */
+export const API_ORIGIN = process.env.NEXT_PUBLIC_API_ORIGIN ?? '';
+const API_BASE = `${API_ORIGIN}/api`;
+
+/**
+ * TODAS las rutas de la API en un solo lugar: un rename futuro (como el
+ * /me → /auth/me de la fase 8) se hace acá y en ningún otro archivo.
+ */
+export const API_ROUTES = {
+  authLogin: '/auth/login',
+  authLogout: '/auth/logout',
+  authMe: '/auth/me',
+  authChangePassword: '/auth/change-password',
+  users: '/users',
+  user: (id: string) => `/users/${id}`,
+  conversations: '/conversations',
+  conversationMessages: (id: string) => `/conversations/${id}/messages`,
+  conversationRead: (id: string) => `/conversations/${id}/read`,
+  conversationAssign: (id: string) => `/conversations/${id}/assign`,
+  conversationStatus: (id: string) => `/conversations/${id}/status`,
+  conversationMedia: (id: string) => `/conversations/${id}/media`,
+  contact: (id: string) => `/contacts/${id}`,
+  templates: '/templates',
+  quickReplies: '/quick-replies',
+  quickReply: (id: string) => `/quick-replies/${id}`,
+  messageMedia: (id: string) => `/messages/${id}/media`,
+} as const;
+
+/**
+ * 401 de un endpoint del dominio = la sesión no existe o venció. El error
+ * es TIPADO para que los flujos de fondo (refetch de reconexión, búsqueda
+ * debounced) lo traguen en silencio: el redirect ya está en curso y un
+ * overlay de "unhandled rejection" no le sirve a nadie. Los /auth/* quedan
+ * afuera: sus 401 son parte del flujo (password incorrecta).
+ */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('Necesitás iniciar sesión de nuevo');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export function isUnauthorized(error: unknown): error is UnauthorizedError {
+  return error instanceof UnauthorizedError;
+}
+
+/** Objeto (no función suelta) para poder espiarlo/anularlo en tests. */
+export const authRedirect = {
+  trigger(): void {
+    if (typeof window === 'undefined') return;
+    if (window.location.pathname.startsWith('/login')) return; // sin loops
+    const next = window.location.pathname + window.location.search;
+    window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+  },
+};
+
+function handleUnauthorized(): never {
+  authRedirect.trigger();
+  throw new UnauthorizedError();
+}
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: 'include', // la sesión viaja en cookie httpOnly
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
   });
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) {
     throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}`);
   }
   return (await res.json()) as T;
 }
 
-export const api = {
-  me: () => json<Me>('/me'),
+/** POST /auth/* leyendo el mensaje del server (mensaje único de login, 429…). */
+async function authPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+  if (!res.ok) {
+    const message = Array.isArray(data.message) ? data.message[0] : data.message;
+    throw new Error(message ?? `Error ${res.status} — probá de nuevo`);
+  }
+  return data as T;
+}
 
-  listConversations: (filter: 'open' | 'all', assignedToMe: boolean, cursor?: string) => {
-    const params = new URLSearchParams();
-    if (filter === 'all') params.set('status', 'all');
-    if (assignedToMe) params.set('assignedToMe', 'true');
-    if (cursor) params.set('cursor', cursor);
-    return json<{ conversations: Conversation[]; nextCursor: string | null; timezone: string }>(
-      `/conversations?${params}`,
-    );
+export interface ConversationListOptions {
+  filter: 'open' | 'all' | 'closed';
+  assignedToMe?: boolean;
+  cursor?: string | null;
+  q?: string | null;
+}
+
+/** Pura y exportada: los params del GET /conversations se testean solos. */
+export function conversationQueryParams(options: ConversationListOptions): URLSearchParams {
+  const params = new URLSearchParams();
+  if (options.filter !== 'open') params.set('status', options.filter);
+  if (options.assignedToMe) params.set('assignedToMe', 'true');
+  if (options.cursor) params.set('cursor', options.cursor);
+  const q = options.q?.trim();
+  if (q) params.set('q', q);
+  return params;
+}
+
+/** Respuesta de GET /auth/me (contrato fase 8). */
+interface AuthMeResponse {
+  user: AuthUser;
+  tenant: { id: string; slug: string; name: string; timezone: string };
+}
+
+function toMe(response: AuthMeResponse): Me {
+  return {
+    tenantId: response.tenant.id,
+    userId: response.user.id,
+    tenantName: response.tenant.name,
+    timezone: response.tenant.timezone,
+    name: response.user.name,
+    email: response.user.email,
+    role: response.user.role,
+    mustChangePassword: response.user.mustChangePassword,
+  };
+}
+
+export const api = {
+  me: async (): Promise<Me> => toMe(await json<AuthMeResponse>(API_ROUTES.authMe)),
+
+  auth: {
+    login: (email: string, password: string) =>
+      authPost<{ user: AuthUser }>(API_ROUTES.authLogin, { email, password }),
+    logout: () => authPost<{ ok: true }>(API_ROUTES.authLogout, {}),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      authPost<{ user: AuthUser }>(API_ROUTES.authChangePassword, {
+        currentPassword,
+        newPassword,
+      }),
   },
+
+  users: {
+    manage: () => json<ManagedUser[]>(`${API_ROUTES.users}?management=true`),
+    create: (input: { email: string; name: string; role: string; password: string }) =>
+      json<ManagedUser>(API_ROUTES.users, { method: 'POST', body: JSON.stringify(input) }),
+    update: (id: string, input: { name?: string; role?: string; isActive?: boolean }) =>
+      json<ManagedUser>(API_ROUTES.user(id), { method: 'PATCH', body: JSON.stringify(input) }),
+  },
+
+  listConversations: (options: ConversationListOptions) =>
+    json<{ conversations: Conversation[]; nextCursor: string | null; timezone: string }>(
+      `${API_ROUTES.conversations}?${conversationQueryParams(options)}`,
+    ),
+
+  listUsers: () => json<AgentUser[]>(API_ROUTES.users),
+
+  updateContactNotes: (contactId: string, notes: string | null) =>
+    json<{ contact: Contact }>(API_ROUTES.contact(contactId), {
+      method: 'PATCH',
+      body: JSON.stringify({ notes }),
+    }),
 
   listMessages: (conversationId: string, cursor?: string) =>
     json<{ messages: Message[]; nextCursor: string | null }>(
-      `/conversations/${conversationId}/messages${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+      `${API_ROUTES.conversationMessages(conversationId)}${
+        cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+      }`,
     ),
 
   markRead: (conversationId: string) =>
-    json<{ conversation: Conversation }>(`/conversations/${conversationId}/read`, {
+    json<{ conversation: Conversation }>(API_ROUTES.conversationRead(conversationId), {
       method: 'POST',
     }),
 
   assign: (conversationId: string, userId: string | null) =>
-    json<{ conversation: Conversation }>(`/conversations/${conversationId}/assign`, {
+    json<{ conversation: Conversation }>(API_ROUTES.conversationAssign(conversationId), {
       method: 'POST',
       body: JSON.stringify({ userId }),
     }),
 
   setStatus: (conversationId: string, status: 'OPEN' | 'CLOSED') =>
-    json<{ conversation: Conversation }>(`/conversations/${conversationId}/status`, {
+    json<{ conversation: Conversation }>(API_ROUTES.conversationStatus(conversationId), {
       method: 'POST',
       body: JSON.stringify({ status }),
     }),
 
-  listTemplates: () => json<Template[]>('/templates'),
+  listTemplates: () => json<Template[]>(API_ROUTES.templates),
 
   quickReplies: {
     list: (includeInactive = false) =>
-      json<QuickReply[]>(`/quick-replies${includeInactive ? '?includeInactive=true' : ''}`),
+      json<QuickReply[]>(
+        `${API_ROUTES.quickReplies}${includeInactive ? '?includeInactive=true' : ''}`,
+      ),
     create: (input: { shortcut: string; title: string; body: string }) =>
-      json<QuickReply>('/quick-replies', { method: 'POST', body: JSON.stringify(input) }),
+      json<QuickReply>(API_ROUTES.quickReplies, { method: 'POST', body: JSON.stringify(input) }),
     update: (id: string, input: Partial<QuickReply>) =>
-      json<QuickReply>(`/quick-replies/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-    deactivate: (id: string) => json<{ ok: true }>(`/quick-replies/${id}`, { method: 'DELETE' }),
+      json<QuickReply>(API_ROUTES.quickReply(id), { method: 'PATCH', body: JSON.stringify(input) }),
+    deactivate: (id: string) =>
+      json<{ ok: true }>(API_ROUTES.quickReply(id), { method: 'DELETE' }),
   },
 
   /**
    * Envío: el envelope { message, error } llega con CUALQUIER status HTTP —
    * no se tira en 4xx/5xx (el caller decide por error.code). Un throw acá
    * es solo fallo de RED → el composer reintenta con la MISMA key.
+   * Excepción única: 401 = sin sesión → flujo de logout, no reintento.
    */
   sendMessage: async (
     conversationId: string,
@@ -78,11 +229,13 @@ export const api = {
       | { clientDedupKey: string; type: 'text'; body: string }
       | { clientDedupKey: string; type: 'template'; templateId: string; params: string[] },
   ): Promise<SendResult> => {
-    const res = await fetch(`${API_URL}/conversations/${conversationId}/messages`, {
+    const res = await fetch(`${API_BASE}${API_ROUTES.conversationMessages(conversationId)}`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 401) handleUnauthorized();
     const envelope = (await res.json().catch(() => ({ message: null, error: null }))) as Omit<
       SendResult,
       'httpStatus'
@@ -103,11 +256,17 @@ export const api = {
       if (input.caption) form.append('caption', input.caption);
 
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_URL}/conversations/${conversationId}/media`);
+      xhr.open('POST', `${API_BASE}${API_ROUTES.conversationMedia(conversationId)}`);
+      xhr.withCredentials = true; // cookie de sesión
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
       };
       xhr.onload = () => {
+        if (xhr.status === 401) {
+          authRedirect.trigger();
+          reject(new UnauthorizedError());
+          return;
+        }
         try {
           const envelope = JSON.parse(xhr.responseText) as Omit<SendResult, 'httpStatus'>;
           resolve({ ...envelope, httpStatus: xhr.status });
@@ -119,5 +278,5 @@ export const api = {
       xhr.send(form);
     }),
 
-  mediaUrl: (messageId: string) => `${API_URL}/messages/${messageId}/media`,
+  mediaUrl: (messageId: string) => `${API_BASE}${API_ROUTES.messageMedia(messageId)}`,
 };

@@ -1,0 +1,8 @@
+# Contexto del Dockerfile del web (web/)
+node_modules
+.next
+test
+.env
+.env.local
+.env.development
+*.md

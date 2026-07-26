@@ -77,11 +77,42 @@ export interface QuickReply {
   isActive: boolean;
 }
 
+/** DTO de GET /users — solo lo que el selector de asignación necesita. */
+export interface AgentUser {
+  id: string;
+  name: string;
+  role: string;
+}
+
+/** DTO del usuario logueado (fase 8: /auth/login y /auth/me). */
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'OWNER' | 'ADMIN' | 'AGENT';
+  mustChangePassword: boolean;
+}
+
+/** DTO de GET /users?management=true (ADMIN+): gestión de usuarios. */
+export interface ManagedUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'OWNER' | 'ADMIN' | 'AGENT';
+  isActive: boolean;
+  mustChangePassword: boolean;
+}
+
+/** Identidad + tenant del bootstrap (mapeado de GET /auth/me). */
 export interface Me {
   tenantId: string;
   userId: string | null;
   tenantName: string | null;
   timezone: string;
+  name: string;
+  email: string;
+  role: 'OWNER' | 'ADMIN' | 'AGENT';
+  mustChangePassword: boolean;
 }
 
 /** Envelope de envío del backend: { message, error } SIEMPRE. */

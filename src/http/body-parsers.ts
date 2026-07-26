@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, raw, urlencoded } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { WEBHOOKS_PATH } from '../webhooks/webhooks.constants';
+import { API_PREFIX } from './api-prefix';
 
 /**
  * La app arranca con bodyParser: false y registra sus parsers acá, porque
@@ -28,7 +29,7 @@ const WEBHOOK_BODY_LIMIT = '1mb';
 
 export function configureBodyParsers(app: NestExpressApplication): void {
   app.use(
-    WEBHOOKS_PATH,
+    `/${API_PREFIX}${WEBHOOKS_PATH}`, // el prefijo global también aplica acá
     raw({ type: () => true, limit: WEBHOOK_BODY_LIMIT }),
     (req: RawBodyRequest<Request>, _res: Response, next: NextFunction) => {
       // express.raw deja Buffer solo cuando hubo body; normalizamos el resto

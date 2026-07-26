@@ -3,21 +3,29 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { MinRole, roleAtLeast, RolesGuard } from '../auth/roles';
 import { PrismaService } from '../prisma/prisma.service';
-import { getTenantContext } from '../tenant/tenant-context.middleware';
+import { getTenantContext } from '../tenant/tenant-context';
 import { ConversationListFilter, ConversationsService } from './conversations.service';
 import { QuickRepliesService } from './quick-replies.service';
 
-/** Endpoints REST del inbox (todo scopeado por tenant vía middleware). */
+/**
+ * Endpoints REST del inbox — sesión obligatoria (SessionAuthMiddleware en
+ * el módulo) + matriz de roles donde aplica. La identidad (/auth/me) y la
+ * gestión de usuarios (/users) viven en el AuthModule.
+ */
 @Controller()
+@UseGuards(RolesGuard)
 export class InboxController {
   constructor(
     private readonly conversations: ConversationsService,
@@ -25,25 +33,13 @@ export class InboxController {
     private readonly prisma: PrismaService,
   ) {}
 
-  /** Identidad efectiva del middleware provisional (la UI la necesita para "Mías"/asignarme). */
-  @Get('me')
-  async me(@Req() req: Request): Promise<unknown> {
-    const { tenantId, userId } = getTenantContext(req);
-    const tenant = await this.prisma.db.tenant.findUnique({ where: { id: tenantId } });
-    return {
-      tenantId,
-      userId,
-      tenantName: tenant?.name ?? null,
-      timezone: tenant?.timezone ?? 'UTC',
-    };
-  }
-
   @Get('conversations')
   async list(
     @Req() req: Request,
     @Query('status') status?: string,
     @Query('assignedToMe') assignedToMe?: string,
     @Query('cursor') cursor?: string,
+    @Query('q') q?: string,
   ): Promise<unknown> {
     const { tenantId, userId } = getTenantContext(req);
     const filter: ConversationListFilter =
@@ -52,7 +48,26 @@ export class InboxController {
       filter,
       assignedToMe: assignedToMe === 'true',
       cursor,
+      q,
     });
+  }
+
+  /** SOLO notes: el resto del contacto lo escribe el webhook, no la UI. */
+  @Patch('contacts/:id')
+  async updateContactNotes(
+    @Param('id') contactId: string,
+    @Body() body: { notes?: string | null },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    const notes = body?.notes ?? null;
+    if (notes !== null && typeof notes !== 'string') {
+      throw new BadRequestException('notes debe ser string o null');
+    }
+    if (typeof notes === 'string' && notes.length > 5000) {
+      throw new BadRequestException('notes supera el máximo de 5000 caracteres');
+    }
+    return { contact: await this.conversations.updateContactNotes(tenantId, contactId, notes) };
   }
 
   @Get('conversations/:id/messages')
@@ -71,18 +86,26 @@ export class InboxController {
     return { conversation: await this.conversations.markRead(tenantId, conversationId) };
   }
 
+  /** Matriz: AGENT solo se asigna/libera a sí mismo; ADMIN+ asigna a otros. */
   @Post('conversations/:id/assign')
   async assign(
     @Param('id') conversationId: string,
     @Body() body: { userId?: string | null },
     @Req() req: Request,
   ): Promise<unknown> {
-    const { tenantId } = getTenantContext(req);
+    const context = getTenantContext(req);
     const userId = body?.userId ?? null;
     if (userId !== null && typeof userId !== 'string') {
       throw new BadRequestException('userId debe ser string o null');
     }
-    return { conversation: await this.conversations.assign(tenantId, conversationId, userId) };
+    if (!roleAtLeast(context.role, 'ADMIN') && userId !== null && userId !== context.userId) {
+      throw new ForbiddenException(
+        'Para asignarle una conversación a otra persona necesitás rol ADMIN',
+      );
+    }
+    return {
+      conversation: await this.conversations.assign(context.tenantId, conversationId, userId),
+    };
   }
 
   @Post('conversations/:id/status')
@@ -130,6 +153,7 @@ export class InboxController {
   }
 
   @Post('quick-replies')
+  @MinRole('ADMIN')
   async createQuickReply(
     @Body() body: { shortcut?: string; title?: string; body?: string },
     @Req() req: Request,
@@ -143,6 +167,7 @@ export class InboxController {
   }
 
   @Patch('quick-replies/:id')
+  @MinRole('ADMIN')
   async updateQuickReply(
     @Param('id') id: string,
     @Body() body: { shortcut?: string; title?: string; body?: string; isActive?: boolean },
@@ -153,6 +178,7 @@ export class InboxController {
   }
 
   @Delete('quick-replies/:id')
+  @MinRole('ADMIN')
   async deleteQuickReply(@Param('id') id: string, @Req() req: Request): Promise<{ ok: true }> {
     const { tenantId } = getTenantContext(req);
     await this.quickReplies.deactivate(tenantId, id);

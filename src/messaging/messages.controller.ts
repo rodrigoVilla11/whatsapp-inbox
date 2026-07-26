@@ -8,7 +8,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { getTenantContext } from '../tenant/tenant-context.middleware';
+import { getTenantContext } from '../tenant/tenant-context';
 import { SendMessageService, SendRequest } from './send-message.service';
 
 /**

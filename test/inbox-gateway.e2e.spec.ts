@@ -18,16 +18,17 @@ import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
 import { io, type Socket as ClientSocket } from 'socket.io-client';
 import request from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { SESSION_COOKIE } from '../src/auth/cookies';
+import { SessionsService } from '../src/auth/sessions.service';
 import { Encryption } from '../src/crypto/encryption';
 import { EncryptionService } from '../src/crypto/encryption.service';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../src/events/domain-events';
 import { InboxGateway } from '../src/events/inbox.gateway';
 import { RedisEventPublisher } from '../src/events/redis-event-publisher';
-import { configureBodyParsers } from '../src/http/body-parsers';
+import { configureApp } from '../src/http/app-setup';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { WEBHOOK_EVENTS_QUEUE } from '../src/queue/queue.constants';
-import { TenantContextService } from '../src/tenant/tenant-context.service';
 import { InboundMessagesService } from '../src/webhook-worker/inbound-messages.service';
 import { MessageStatusesService } from '../src/webhook-worker/message-statuses.service';
 import { WebhookEventHandler } from '../src/webhook-worker/webhook-event.handler';
@@ -60,7 +61,8 @@ describe('InboxGateway (integración con Redis real)', () => {
   let app: NestExpressApplication;
   let baseUrl: string;
   let publisher: DomainEventPublisher;
-  let resolveMock: ReturnType<typeof vi.fn>;
+  let tokenA: string;
+  let tokenB: string;
   const db = createFakeDb();
   const openSockets: ClientSocket[] = [];
 
@@ -83,10 +85,15 @@ describe('InboxGateway (integración con Redis real)', () => {
       wabaId: 'waba',
       metaAppId: 'app_1',
     });
-
-    resolveMock = vi.fn().mockResolvedValue({ tenantId: TENANT_A, userId: null });
+    // Fase 8: el handshake valida SESIONES REALES por cookie.
+    db.user.seed({ id: 'u_A', tenantId: TENANT_A, email: 'a@gw.test', name: 'Agente A' });
+    db.user.seed({ id: 'u_B', tenantId: TENANT_B, email: 'b@gw.test', name: 'Agente B' });
 
     const prisma = { db } as unknown as PrismaService;
+    const sessions = new SessionsService(prisma);
+    tokenA = (await sessions.create({ id: 'u_A', tenantId: TENANT_A }, null)).token;
+    tokenB = (await sessions.create({ id: 'u_B', tenantId: TENANT_B }, null)).token;
+
     const configStub = { get: (key: string) => (key === 'REDIS_URL' ? REDIS_URL : undefined) };
 
     const moduleRef = await Test.createTestingModule({
@@ -95,10 +102,10 @@ describe('InboxGateway (integración con Redis real)', () => {
         WebhooksService,
         MetaAppsService,
         InboxGateway,
+        SessionsService,
         { provide: PrismaService, useValue: prisma },
         { provide: EncryptionService, useValue: encryption },
         { provide: ConfigService, useValue: configStub },
-        { provide: TenantContextService, useValue: { resolveDefault: resolveMock } },
         {
           provide: DOMAIN_EVENT_PUBLISHER,
           useFactory: () => new RedisEventPublisher(REDIS_URL),
@@ -129,7 +136,7 @@ describe('InboxGateway (integración con Redis real)', () => {
 
     app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false });
     app.useLogger(false);
-    configureBodyParsers(app);
+    configureApp(app); // prefijo /api + parsers, igual que producción
     await app.init();
     await app.listen(0);
     const address = app.getHttpServer().address() as { port: number };
@@ -142,18 +149,22 @@ describe('InboxGateway (integración con Redis real)', () => {
     await app.close();
   });
 
-  beforeEach(() => {
-    resolveMock.mockResolvedValue({ tenantId: TENANT_A, userId: null });
-  });
-
-  function connect(): ClientSocket {
-    const socket = io(`${baseUrl}/inbox`, { transports: ['websocket'], reconnection: false });
+  /** La cookie de sesión viaja en los headers del upgrade, como en el browser. */
+  function connect(sessionToken?: string): ClientSocket {
+    const socket = io(`${baseUrl}/inbox`, {
+      path: '/api/socket.io', // un solo origen (10b): mismo path que el cliente real
+      transports: ['websocket'],
+      reconnection: false,
+      ...(sessionToken
+        ? { extraHeaders: { cookie: `${SESSION_COOKIE}=${sessionToken}` } }
+        : {}),
+    });
     openSockets.push(socket);
     return socket;
   }
 
-  it('FLUJO COMPLETO: webhook firmado → worker → Redis → gateway → cliente recibe message.created', async () => {
-    const socket = connect();
+  it('FLUJO COMPLETO: webhook firmado (SIN sesión — su auth es la firma) → worker → Redis → gateway → cliente con sesión recibe message.created', async () => {
+    const socket = connect(tokenA);
     await waitForEvent(socket, 'connect');
     await sleep(100); // join al room asentado
 
@@ -190,7 +201,7 @@ describe('InboxGateway (integración con Redis real)', () => {
       'message.created',
     );
     await request(app.getHttpServer())
-      .post('/webhooks/whatsapp')
+      .post('/api/webhooks/whatsapp')
       .set('content-type', 'application/json')
       .set('x-hub-signature-256', computeMetaSignature(Buffer.from(body), APP_SECRET))
       .send(body)
@@ -201,12 +212,11 @@ describe('InboxGateway (integración con Redis real)', () => {
     expect(payload.conversationId).toBeTruthy();
   });
 
-  it('AISLAMIENTO: evento de tenant A → socket de tenant B NO lo recibe', async () => {
-    const socketA = connect();
+  it('AISLAMIENTO: evento de tenant A → socket con sesión de tenant B NO lo recibe', async () => {
+    const socketA = connect(tokenA);
     await waitForEvent(socketA, 'connect');
 
-    resolveMock.mockResolvedValueOnce({ tenantId: TENANT_B, userId: null });
-    const socketB = connect();
+    const socketB = connect(tokenB);
     await waitForEvent(socketB, 'connect');
     await sleep(100);
 
@@ -226,11 +236,44 @@ describe('InboxGateway (integración con Redis real)', () => {
     expect(receivedByB).toHaveLength(0); // el test de aislamiento más importante
   });
 
-  it('handshake sin tenant resoluble → desconexión inmediata', async () => {
-    resolveMock.mockResolvedValueOnce(null);
-    const socket = connect();
+  it('PAR DE REQUISITO (withCredentials): con cookie válida conecta y PERMANECE; el mismo cliente sin la cookie es rechazado', async () => {
+    // Documenta por qué el cliente browser necesita withCredentials: sin la
+    // cookie en el upgrade, el server desconecta; con ella, el socket queda.
+    const withCookie = connect(tokenA);
+    await waitForEvent(withCookie, 'connect');
+
+    const withoutCookie = connect(); // simula un cliente sin withCredentials
+    const rejected = new Promise<void>((resolve) => {
+      withoutCookie.on('disconnect', () => resolve());
+    });
+    await waitForEvent(withoutCookie, 'connect');
+    await Promise.race([
+      rejected,
+      sleep(3000).then(() => Promise.reject(new Error('el server no desconectó al sin-cookie'))),
+    ]);
+    await sleep(200); // margen: que una desconexión tardía no pase colada
+
+    expect(withoutCookie.connected).toBe(false);
+    expect(withCookie.connected).toBe(true); // el autenticado sigue firme
+  });
+
+  it('handshake SIN cookie de sesión → desconexión inmediata', async () => {
+    const socket = connect(); // sin cookie
     // Listener ANTES del connect: el server echa tan rápido que el evento
     // puede llegar pegado al connect y perderse si se engancha después.
+    const disconnected = new Promise<void>((resolve) => {
+      socket.on('disconnect', () => resolve());
+    });
+    await waitForEvent(socket, 'connect');
+    await Promise.race([
+      disconnected,
+      sleep(3000).then(() => Promise.reject(new Error('el server no desconectó'))),
+    ]);
+    expect(socket.connected).toBe(false);
+  });
+
+  it('handshake con cookie INVÁLIDA → desconexión inmediata', async () => {
+    const socket = connect('token-falso-que-no-existe');
     const disconnected = new Promise<void>((resolve) => {
       socket.on('disconnect', () => resolve());
     });

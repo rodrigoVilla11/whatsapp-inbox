@@ -1,7 +1,19 @@
 'use client';
 
+/**
+ * REGLA PERMANENTE — selectores de este store (y de cualquier otro):
+ * deben devolver REFERENCIAS ESTABLES. Nada de literales, spreads,
+ * map/filter/slice/sort ni `?? []` / `?? {}` dentro del selector — React
+ * compara el resultado de getSnapshot por referencia y un valor nuevo por
+ * evaluación produce un loop infinito de re-renders.
+ *
+ * Remedios, en orden de preferencia:
+ * 1. Seleccionar el dato crudo y derivar en el componente con useMemo.
+ * 2. Fallbacks vacíos como constante módulo-level (lib/selectors.ts).
+ * 3. useShallow (zustand/react/shallow) para selecciones múltiples {a,b,c}.
+ */
 import { create } from 'zustand';
-import { api } from './api';
+import { api, isUnauthorized } from './api';
 import {
   manualRetry,
   nextNetworkAttempt,
@@ -12,7 +24,9 @@ import {
   startSend,
 } from './composer';
 import { applyMessageChanges, sortMessages, upsertConversation, upsertMessage } from './merge';
+import { createDebounce, SEARCH_DEBOUNCE_MS } from './search';
 import type {
+  AgentUser,
   Conversation,
   ConversationUpdatedEvent,
   Me,
@@ -24,7 +38,16 @@ import type {
   Template,
 } from './types';
 
-export type ListFilter = 'open' | 'all' | 'mine';
+export type ListFilter = 'open' | 'all' | 'mine' | 'closed';
+
+/** ¿La conversación pertenece a la lista visible según el tab? (solo status —
+ * el resto del filtrado es del server; esto evita que un conversation.updated
+ * re-inserte una cerrada en "Abiertas"). */
+function statusMatchesFilter(status: Conversation['status'], filter: ListFilter): boolean {
+  if (filter === 'closed') return status === 'CLOSED';
+  if (filter === 'all') return true;
+  return status !== 'CLOSED'; // open y mine
+}
 
 interface InboxState {
   me: Me | null;
@@ -32,6 +55,11 @@ interface InboxState {
   connection: 'online' | 'reconnecting';
   filter: ListFilter;
   conversations: Conversation[];
+  /** Agentes del tenant (GET /users) — selector de asignación y chips. */
+  users: AgentUser[];
+  /** Texto del input de búsqueda (inmediato; el fetch va con debounce). */
+  searchQuery: string;
+  conversationsLoading: boolean;
   nextCursor: string | null;
   selectedId: string | null;
   /** Mensajes por conversación, ascendentes por timestamp. */
@@ -46,6 +74,8 @@ interface InboxState {
 
   bootstrap(): Promise<void>;
   setFilter(filter: ListFilter): Promise<void>;
+  setSearchQuery(q: string): void;
+  saveContactNotes(conversationId: string, notes: string): Promise<void>;
   loadConversations(): Promise<void>;
   loadMoreConversations(): Promise<void>;
   select(conversationId: string | null): Promise<void>;
@@ -105,6 +135,11 @@ function optimisticMessage(
 }
 
 export const useInbox = create<InboxState>()((set, get) => {
+  // Guardia de carrera: dos fetches de lista en vuelo (tipeo rápido en la
+  // búsqueda) — solo el más reciente escribe el estado.
+  let listRequestSeq = 0;
+  const searchDebounce = createDebounce(() => void get().loadConversations(), SEARCH_DEBOUNCE_MS);
+
   function putMessage(conversationId: string, message: Message): void {
     set((s) => ({
       messages: {
@@ -176,6 +211,9 @@ export const useInbox = create<InboxState>()((set, get) => {
     connection: 'reconnecting',
     filter: 'open',
     conversations: [],
+    users: [],
+    searchQuery: '',
+    conversationsLoading: true,
     nextCursor: null,
     selectedId: null,
     messages: {},
@@ -187,61 +225,123 @@ export const useInbox = create<InboxState>()((set, get) => {
     lastError: null,
 
     async bootstrap() {
-      const [me, templates, quickReplies] = await Promise.all([
-        api.me(),
+      // /auth/me primero: es el gate. 401 → redirect a /login ya disparado
+      // por api.ts; acá se corta en silencio (nada de fondo sin sesión).
+      let me;
+      try {
+        me = await api.me();
+      } catch (error) {
+        if (isUnauthorized(error)) return;
+        set({
+          conversationsLoading: false,
+          lastError: 'No pudimos conectar con el servidor — revisá que la API esté corriendo.',
+        });
+        return;
+      }
+      const [templates, quickReplies, users] = await Promise.all([
         api.listTemplates().catch(() => []),
         api.quickReplies.list().catch(() => []),
+        api.listUsers().catch(() => []),
       ]);
-      set({ me, timezone: me.timezone, templates, quickReplies });
+      set({ me, timezone: me.timezone, templates, quickReplies, users });
       await get().loadConversations();
     },
 
     async setFilter(filter) {
-      set({ filter });
+      // cambiar de tab sale del modo búsqueda: el tab vuelve a mandar
+      searchDebounce.cancel();
+      set({ filter, searchQuery: '' });
       await get().loadConversations();
     },
 
+    setSearchQuery(q) {
+      set({ searchQuery: q });
+      searchDebounce.call();
+    },
+
+    async saveContactNotes(conversationId, notes) {
+      const conversation = get().conversations.find((c) => c.id === conversationId);
+      const contactId = conversation?.contact?.id;
+      if (!contactId) return;
+      const { contact } = await api.updateContactNotes(contactId, notes);
+      set((s) => ({
+        conversations: s.conversations.map((c) =>
+          c.contact?.id === contact.id ? { ...c, contact } : c,
+        ),
+      }));
+    },
+
     async loadConversations() {
-      const { filter, me } = get();
-      const result = await api.listConversations(
-        filter === 'all' ? 'all' : 'open',
-        filter === 'mine' && !!me?.userId,
-      );
-      set({
-        conversations: result.conversations,
-        nextCursor: result.nextCursor,
-        timezone: result.timezone,
-      });
+      const { filter, me, searchQuery } = get();
+      const seq = ++listRequestSeq;
+      set({ conversationsLoading: true });
+      try {
+        const result = await api.listConversations({
+          filter: filter === 'all' || filter === 'closed' ? filter : 'open',
+          assignedToMe: filter === 'mine' && !!me?.userId,
+          q: searchQuery,
+        });
+        if (seq !== listRequestSeq) return; // llegó tarde: hay un fetch más nuevo
+        set({
+          conversations: result.conversations,
+          nextCursor: result.nextCursor,
+          timezone: result.timezone,
+          conversationsLoading: false,
+        });
+      } catch (error) {
+        if (seq !== listRequestSeq) return;
+        if (isUnauthorized(error)) {
+          // fondo sin sesión: el redirect al login ya corre — cero overlay
+          set({ conversationsLoading: false });
+          return;
+        }
+        // el error ya se comunica por lastError; acá no hay retry a ciegas
+        set({
+          conversationsLoading: false,
+          lastError: 'No pudimos cargar las conversaciones — revisá la conexión y reintentá.',
+        });
+      }
     },
 
     async loadMoreConversations() {
-      const { filter, me, nextCursor, conversations } = get();
+      const { filter, me, nextCursor, conversations, searchQuery } = get();
       if (!nextCursor) return;
-      const result = await api.listConversations(
-        filter === 'all' ? 'all' : 'open',
-        filter === 'mine' && !!me?.userId,
-        nextCursor,
-      );
-      set({
-        conversations: [...conversations, ...result.conversations],
-        nextCursor: result.nextCursor,
-      });
+      try {
+        const result = await api.listConversations({
+          filter: filter === 'all' || filter === 'closed' ? filter : 'open',
+          assignedToMe: filter === 'mine' && !!me?.userId,
+          cursor: nextCursor,
+          q: searchQuery,
+        });
+        set({
+          conversations: [...conversations, ...result.conversations],
+          nextCursor: result.nextCursor,
+        });
+      } catch (error) {
+        if (isUnauthorized(error)) return; // redirect en curso
+        set({ lastError: 'No pudimos cargar más conversaciones — reintentá.' });
+      }
     },
 
     async select(conversationId) {
       set({ selectedId: conversationId });
       if (!conversationId) return;
-      const page = await api.listMessages(conversationId);
-      set((s) => ({
-        messages: {
-          ...s.messages,
-          [conversationId]: sortMessages([...page.messages].reverse()),
-        },
-        messagesCursor: { ...s.messagesCursor, [conversationId]: page.nextCursor },
-      }));
-      const conversation = get().conversations.find((c) => c.id === conversationId);
-      if (conversation && conversation.unreadCount > 0) {
-        await get().markRead(conversationId);
+      try {
+        const page = await api.listMessages(conversationId);
+        set((s) => ({
+          messages: {
+            ...s.messages,
+            [conversationId]: sortMessages([...page.messages].reverse()),
+          },
+          messagesCursor: { ...s.messagesCursor, [conversationId]: page.nextCursor },
+        }));
+        const conversation = get().conversations.find((c) => c.id === conversationId);
+        if (conversation && conversation.unreadCount > 0) {
+          await get().markRead(conversationId);
+        }
+      } catch (error) {
+        if (isUnauthorized(error)) return; // redirect en curso
+        set({ lastError: 'No pudimos abrir la conversación — reintentá.' });
       }
     },
 
@@ -263,14 +363,22 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     /** Contrato de reconexión: refetch REST y recién después confiar en el stream. */
     async refetchAfterReconnect() {
-      await get().loadConversations();
-      const selected = get().selectedId;
-      if (selected) {
-        const page = await api.listMessages(selected);
-        set((s) => ({
-          messages: { ...s.messages, [selected]: sortMessages([...page.messages].reverse()) },
-          messagesCursor: { ...s.messagesCursor, [selected]: page.nextCursor },
-        }));
+      // Gate de auth: actividad de FONDO jamás corre sin sesión resuelta
+      // (post-logout o pre-bootstrap este método es un no-op, no un 401).
+      if (!get().me) return;
+      try {
+        await get().loadConversations();
+        const selected = get().selectedId;
+        if (selected) {
+          const page = await api.listMessages(selected);
+          set((s) => ({
+            messages: { ...s.messages, [selected]: sortMessages([...page.messages].reverse()) },
+            messagesCursor: { ...s.messagesCursor, [selected]: page.nextCursor },
+          }));
+        }
+      } catch (error) {
+        if (isUnauthorized(error)) return; // redirect en curso, silencio
+        set({ lastError: 'No pudimos actualizar al reconectar — recargá si algo se ve viejo.' });
       }
     },
 
@@ -293,7 +401,15 @@ export const useInbox = create<InboxState>()((set, get) => {
     },
 
     onConversationUpdated({ conversation }) {
-      set((s) => ({ conversations: upsertConversation(s.conversations, conversation) }));
+      set((s) => {
+        // Buscando se ven todos los estados; si no, el evento respeta el tab
+        // (que un cierre ajeno no re-inserte la fila en "Abiertas").
+        if (!s.searchQuery && !statusMatchesFilter(conversation.status, s.filter)) {
+          if (!s.conversations.some((c) => c.id === conversation.id)) return s;
+          return { conversations: s.conversations.filter((c) => c.id !== conversation.id) };
+        }
+        return { conversations: upsertConversation(s.conversations, conversation) };
+      });
     },
 
     async sendText(conversationId, body) {
@@ -399,7 +515,12 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     async setConversationStatus(conversationId, status) {
       const { conversation } = await api.setStatus(conversationId, status);
-      set((s) => ({ conversations: upsertConversation(s.conversations, conversation) }));
+      set((s) => ({
+        conversations:
+          !s.searchQuery && !statusMatchesFilter(conversation.status, s.filter)
+            ? s.conversations.filter((c) => c.id !== conversation.id) // sale del tab
+            : upsertConversation(s.conversations, conversation),
+      }));
     },
 
     dismissError() {

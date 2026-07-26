@@ -7,6 +7,8 @@ import {
   ORPHAN_MEDIA_SWEEP_JOB,
   PURGE_WEBHOOK_EVENTS_CRON,
   PURGE_WEBHOOK_EVENTS_JOB,
+  SESSION_SWEEP_CRON,
+  SESSION_SWEEP_JOB,
 } from '../queue/queue.constants';
 
 /**
@@ -35,9 +37,15 @@ export class MaintenanceScheduler implements OnApplicationBootstrap {
       { every: ORPHAN_MEDIA_SWEEP_EVERY_MS },
       { name: ORPHAN_MEDIA_SWEEP_JOB },
     );
+    await this.queue.upsertJobScheduler(
+      SESSION_SWEEP_JOB,
+      { pattern: SESSION_SWEEP_CRON },
+      { name: SESSION_SWEEP_JOB },
+    );
     this.logger.log(
       `Mantenimiento programado: purga WebhookEvent (cron "${PURGE_WEBHOOK_EVENTS_CRON}") ` +
-        `+ barrido de media huérfana (cada ${ORPHAN_MEDIA_SWEEP_EVERY_MS / 60000} min)`,
+        `+ barrido de media huérfana (cada ${ORPHAN_MEDIA_SWEEP_EVERY_MS / 60000} min) ` +
+        `+ barrido de sesiones vencidas (cron "${SESSION_SWEEP_CRON}")`,
     );
   }
 }
