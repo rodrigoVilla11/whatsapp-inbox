@@ -31,7 +31,7 @@ beforeEach(() => {
   usersService = new UsersService(prisma, new SessionsService(prisma));
   db.tenant.seed({ id: TENANT, slug: 'nova-sushi', name: 'Nova Sushi' });
   db.tenant.seed({ id: OTRO_TENANT, slug: 'otro', name: 'Otro' });
-  db.whatsappAccount.seed({ id: 'acc_1', tenantId: TENANT, phoneNumberId: 'PN_1' });
+  db.whatsappAccount.seed({ id: 'acc_1', tenantId: TENANT, phoneNumberId: 'PN_1', status: 'ACTIVE' });
 });
 
 function seedContactAndConversation(
@@ -111,6 +111,54 @@ describe('GET /users', () => {
     expect(users.map((u) => u.id)).toEqual(['u_a', 'u_b']);
     // DTO mínimo: sin email ni passwordHash
     expect(users[0]).toEqual({ id: 'u_a', name: 'Alfredo', role: 'AGENT' });
+  });
+});
+
+describe('POST /conversations/open-by-phone (deep-link Gourmetify, ex wa.me)', () => {
+  it('teléfono nuevo → crea contacto y conversación OPEN, y emite conversation.updated', async () => {
+    const dto = (await service.openByPhone(TENANT, '5493415550001')) as {
+      id: string;
+      status: string;
+      contact: { waId: string; phoneE164: string };
+    };
+    expect(dto.status).toBe('OPEN');
+    expect(dto.contact.waId).toBe('5493415550001');
+    expect(dto.contact.phoneE164).toBe('+5493415550001');
+    expect(db.contact.findFirst({ where: { tenantId: TENANT, waId: '5493415550001' } })).toBeTruthy();
+  });
+
+  it('idempotente: el mismo teléfono devuelve LA MISMA conversación', async () => {
+    const first = (await service.openByPhone(TENANT, '5493415550002')) as { id: string };
+    const second = (await service.openByPhone(TENANT, '549 341 555-0002')) as { id: string };
+    expect(second.id).toBe(first.id);
+    expect(db.conversation.findMany({ where: { tenantId: TENANT } })).toHaveLength(1);
+  });
+
+  it('normaliza el formato wa.me: "+54 9 341..." y dígitos pelados son el mismo contacto', async () => {
+    await service.openByPhone(TENANT, '+54 9 341-555-0003');
+    const contacts = db.contact.findMany({ where: { tenantId: TENANT } });
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].waId).toBe('549341555000' + '3');
+  });
+
+  it('teléfono inválido (corto o basura) → 400 con mensaje claro', async () => {
+    await expect(service.openByPhone(TENANT, '123')).rejects.toThrow(/inválido/);
+    await expect(service.openByPhone(TENANT, 'no-es-numero')).rejects.toThrow(/inválido/);
+  });
+
+  it('sin cuenta de WhatsApp ACTIVA → 400 accionable', async () => {
+    db.whatsappAccount.updateMany({ where: { id: 'acc_1' }, data: { status: 'PENDING' } });
+    await expect(service.openByPhone(TENANT, '5493415550004')).rejects.toThrow(
+      /cuenta de WhatsApp activa/,
+    );
+  });
+
+  it('tenant-scoping: el contacto de otro tenant con el mismo waId no se reutiliza', async () => {
+    db.contact.seed({ id: 'ct_otro', tenantId: OTRO_TENANT, waId: '5493415550005' });
+    const dto = (await service.openByPhone(TENANT, '5493415550005')) as {
+      contact: { id: string };
+    };
+    expect(dto.contact.id).not.toBe('ct_otro');
   });
 });
 

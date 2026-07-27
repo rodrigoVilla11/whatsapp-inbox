@@ -12,13 +12,17 @@ import type {
 } from './types';
 
 /**
- * UN SOLO ORIGEN (fase 10b): en producción el frontend llama con rutas
- * RELATIVAS (/api/...) — mismo dominio, cero CORS, cookie sin Domain.
+ * UN SOLO ORIGEN (fase 10b) + integración Gourmetify: en producción el
+ * inbox vive bajo <dominio>/inbox y llama a la API con rutas RELATIVAS
+ * /inbox/api/* (el proxy reescribe a /api/* del servicio API) — mismo
+ * dominio, cero CORS, cookie sin Domain.
  * NEXT_PUBLIC_API_ORIGIN existe SOLO para dev (web :3000 → api :3001,
  * seteada en web/.env.development); en producción no se define.
  */
 export const API_ORIGIN = process.env.NEXT_PUBLIC_API_ORIGIN ?? '';
-const API_BASE = `${API_ORIGIN}/api`;
+/** Debe coincidir con basePath de next.config.ts. */
+export const BASE_PATH = '/inbox';
+const API_BASE = API_ORIGIN ? `${API_ORIGIN}/api` : `${BASE_PATH}/api`;
 
 /**
  * TODAS las rutas de la API en un solo lugar: un rename futuro (como el
@@ -32,6 +36,7 @@ export const API_ROUTES = {
   users: '/users',
   user: (id: string) => `/users/${id}`,
   conversations: '/conversations',
+  conversationOpenByPhone: '/conversations/open-by-phone',
   conversationMessages: (id: string) => `/conversations/${id}/messages`,
   conversationRead: (id: string) => `/conversations/${id}/read`,
   conversationAssign: (id: string) => `/conversations/${id}/assign`,
@@ -66,9 +71,11 @@ export function isUnauthorized(error: unknown): error is UnauthorizedError {
 export const authRedirect = {
   trigger(): void {
     if (typeof window === 'undefined') return;
-    if (window.location.pathname.startsWith('/login')) return; // sin loops
+    // window.location INCLUYE el basePath (el router de Next no) — todo acá
+    // se maneja en coordenadas absolutas del browser.
+    if (window.location.pathname.startsWith(`${BASE_PATH}/login`)) return; // sin loops
     const next = window.location.pathname + window.location.search;
-    window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    window.location.assign(`${BASE_PATH}/login?next=${encodeURIComponent(next)}`);
   },
 };
 
@@ -164,6 +171,13 @@ export const api = {
     update: (id: string, input: { name?: string; role?: string; isActive?: boolean }) =>
       json<ManagedUser>(API_ROUTES.user(id), { method: 'PATCH', body: JSON.stringify(input) }),
   },
+
+  /** Deep-link Gourmetify (ex wa.me): abre o crea la conversación del teléfono. */
+  openByPhone: (phone: string) =>
+    json<{ conversation: Conversation }>(API_ROUTES.conversationOpenByPhone, {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    }),
 
   listConversations: (options: ConversationListOptions) =>
     json<{ conversations: Conversation[]; nextCursor: string | null; timezone: string }>(

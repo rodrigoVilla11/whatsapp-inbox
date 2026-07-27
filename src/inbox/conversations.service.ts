@@ -186,6 +186,66 @@ export class ConversationsService {
     return this.emitAndReturn(tenantId, conversationId);
   }
 
+  /**
+   * Deep-link desde Gourmetify (reemplazo de wa.me): abre o crea la
+   * conversación del teléfono. Idempotente: mismo teléfono → misma
+   * conversación (upsert por el unique [tenant, cuenta, contacto]).
+   */
+  async openByPhone(tenantId: string, rawPhone: string): Promise<unknown> {
+    const digits = String(rawPhone ?? '').replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) {
+      throw new BadRequestException(
+        'Teléfono inválido — se espera el número internacional (como en wa.me)',
+      );
+    }
+    const db = this.prisma.db;
+
+    let contact = (await db.contact.findFirst({
+      where: { tenantId, waId: digits },
+    })) as Contact | null;
+
+    // La cuenta define a qué conversación pertenece; sin cuenta activa no
+    // hay chat posible.
+    const account = await db.whatsappAccount.findFirst({
+      where: { tenantId, status: 'ACTIVE' },
+    });
+    if (!account) {
+      throw new BadRequestException(
+        'No hay una cuenta de WhatsApp activa para este restaurante',
+      );
+    }
+
+    if (!contact) {
+      contact = (await db.contact.create({
+        data: { tenantId, waId: digits, phoneE164: `+${digits}` },
+      })) as Contact;
+    }
+
+    const conversation = (await db.conversation.upsert({
+      where: {
+        tenantId_whatsappAccountId_contactId: {
+          tenantId,
+          whatsappAccountId: account.id as string,
+          contactId: contact.id,
+        },
+      },
+      create: {
+        tenantId,
+        whatsappAccountId: account.id as string,
+        contactId: contact.id,
+        status: 'OPEN',
+      },
+      update: {},
+    })) as Conversation;
+
+    await this.events.publish({
+      tenantId,
+      type: 'conversation.updated',
+      payload: { conversation: serializeConversation(conversation) },
+    });
+    return serializeConversation(conversation, contact);
+  }
+
   /** PATCH /contacts/:id — SOLO notes. '' se guarda como null. */
   async updateContactNotes(
     tenantId: string,

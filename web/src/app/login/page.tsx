@@ -2,13 +2,20 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { api } from '@/lib/api';
+import { api, BASE_PATH } from '@/lib/api';
 
-/** Solo paths internos: nada de ?next=https://otro-lado (open redirect). */
+/**
+ * Solo paths internos: nada de ?next=https://otro-lado (open redirect).
+ * El next llega en coordenadas del browser (CON basePath, lo pone
+ * authRedirect) — se le quita el prefijo porque el router de Next lo
+ * re-agrega solo.
+ */
 function safeNext(): string {
-  if (typeof window === 'undefined') return '/inbox';
-  const next = new URLSearchParams(window.location.search).get('next');
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/inbox';
+  if (typeof window === 'undefined') return '/';
+  const raw = new URLSearchParams(window.location.search).get('next');
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
+  const next = raw.startsWith(BASE_PATH) ? raw.slice(BASE_PATH.length) : raw;
+  return next.startsWith('/') ? next : '/';
 }
 
 export default function LoginPage() {

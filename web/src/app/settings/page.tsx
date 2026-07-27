@@ -1,7 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, BASE_PATH } from '@/lib/api';
 import { playIncomingSound, initNotifications } from '@/lib/notify';
 import { type InboxPrefs, usePrefs } from '@/lib/prefs';
 import { toast } from '@/lib/toast';
@@ -62,7 +63,9 @@ export default function InboxSettings() {
     try {
       await api.auth.logout();
     } finally {
-      window.location.assign('/login');
+      // full reload a propósito (limpia todo el estado en memoria);
+      // window.location necesita el basePath explícito.
+      window.location.assign(`${BASE_PATH}/login`);
     }
   }
 
@@ -94,9 +97,9 @@ export default function InboxSettings() {
   return (
     <main className="mx-auto max-w-2xl p-4">
       <header className="mb-4">
-        <a href="/inbox" className="text-sm text-nori hover:underline">
+        <Link href="/" className="text-sm text-nori hover:underline">
           ← Volver al inbox
-        </a>
+        </Link>
         <h1 className="text-xl font-semibold">Ajustes</h1>
       </header>
 
@@ -141,7 +144,7 @@ export default function InboxSettings() {
         <h2 className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-piedra">
           Respuestas
         </h2>
-        <a
+        <Link
           href="/settings/quick-replies"
           className="flex min-h-14 items-center justify-between rounded-xl px-3 py-2 hover:bg-ceramic"
         >
@@ -154,7 +157,7 @@ export default function InboxSettings() {
           <span aria-hidden className="text-piedra">
             ›
           </span>
-        </a>
+        </Link>
       </section>
 
       <section className="mt-4 rounded-2xl border border-line bg-rice p-2">
@@ -162,7 +165,7 @@ export default function InboxSettings() {
           Cuenta
         </h2>
         {(me?.role === 'ADMIN' || me?.role === 'OWNER') && (
-          <a
+          <Link
             href="/settings/users"
             className="flex min-h-14 items-center justify-between rounded-xl px-3 py-2 hover:bg-ceramic"
           >
@@ -175,7 +178,7 @@ export default function InboxSettings() {
             <span aria-hidden className="text-piedra">
               ›
             </span>
-          </a>
+          </Link>
         )}
         <button
           onClick={() => void logout()}

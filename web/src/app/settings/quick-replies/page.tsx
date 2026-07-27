@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type { QuickReply } from '@/lib/types';
@@ -43,9 +44,9 @@ export default function QuickRepliesSettings() {
     <main className="mx-auto max-w-2xl p-4">
       <header className="mb-4 flex items-center justify-between">
         <div>
-          <a href="/settings" className="text-sm text-nori hover:underline">
+          <Link href="/settings" className="text-sm text-nori hover:underline">
             ← Volver a Ajustes
-          </a>
+          </Link>
           <h1 className="text-xl font-semibold">Respuestas rápidas</h1>
         </div>
         <button

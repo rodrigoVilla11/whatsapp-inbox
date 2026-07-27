@@ -1,7 +1,7 @@
 'use client';
 
 import { io, type Socket } from 'socket.io-client';
-import { API_ORIGIN } from './api';
+import { API_ORIGIN, BASE_PATH } from './api';
 import { notifyInbound } from './notify';
 import { useInbox } from './store';
 import type { MessageCreatedEvent } from './types';
@@ -27,10 +27,11 @@ export function connectInboxSocket(): () => void {
   refs += 1;
   if (!socket) {
     // withCredentials: la cookie de sesión autentica el handshake (fase 8).
-    // path /api/socket.io: mismo origen que el resto (fase 10b) — en prod
-    // API_ORIGIN es '' y el upgrade va al propio dominio, vía el proxy.
+    // Path: en prod (mismo origen) el upgrade entra por /inbox/api/socket.io
+    // y el proxy lo reescribe a /api/socket.io (el path del server); en dev
+    // se conecta directo a la API sin basePath.
     const s = io(`${API_ORIGIN}/inbox`, {
-      path: '/api/socket.io',
+      path: API_ORIGIN ? '/api/socket.io' : `${BASE_PATH}/api/socket.io`,
       transports: ['websocket'],
       withCredentials: true,
     });

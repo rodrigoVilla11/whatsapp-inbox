@@ -70,7 +70,7 @@ beforeEach(() => {
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://test').pathname;
-      if (path === '/api/auth/me') {
+      if (path === '/inbox/api/auth/me') {
         // contrato fase 8: user + tenant desde la sesión
         return jsonResponse({
           user: { id: 'u1', email: 'u1@nova.test', name: 'Uno', role: 'OWNER', mustChangePassword: false },
@@ -78,7 +78,7 @@ beforeEach(() => {
         });
       }
       if (path.endsWith('/messages')) return jsonResponse({ messages: [], nextCursor: null });
-      if (path === '/api/conversations') {
+      if (path === '/inbox/api/conversations') {
         return jsonResponse({ conversations: [conversationFixture], nextCursor: null, timezone: 'UTC' });
       }
       return jsonResponse([]); // templates, quick-replies, users
@@ -130,7 +130,7 @@ describe('InboxShell completo (click en conversación)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const path = new URL(String(input), 'http://test').pathname;
-        if (path === '/api/auth/me') {
+        if (path === '/inbox/api/auth/me') {
           return new Response(JSON.stringify({ message: 'no' }), {
             status: 401,
             headers: { 'content-type': 'application/json' },

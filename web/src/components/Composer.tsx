@@ -93,6 +93,21 @@ export function Composer({ conversation }: { conversation: Conversation }) {
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
   }, [text]);
 
+  // Deep-link de Gourmetify: ?draft=<texto> precarga el composer UNA vez y
+  // limpia el param (F5 no lo re-inserta). Si la ventana está cerrada, el
+  // texto queda visible en el textarea deshabilitado — plantillas manda.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const draft = params.get('draft');
+    if (!draft) return;
+    setText(draft.slice(0, TEXT_LIMIT));
+    params.delete('draft');
+    const query = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // "/" al inicio → picker de respuestas rápidas filtrado mientras escribe
   const quickMatches: QuickReply[] = useMemo(() => {
     if (!text.startsWith('/') || text.includes(' ')) return [];

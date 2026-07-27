@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { formatTime, initialOf, relativeListTime } from '@/lib/format';
 import { type ListFilter, useInbox } from '@/lib/store';
@@ -133,12 +134,12 @@ export function ConversationList({
       <header className="border-b border-line p-3">
         <div className="mb-2 flex items-center justify-between">
           <h1 className="text-lg font-semibold">Inbox</h1>
-          <a
+          <Link
             href="/settings"
             className="min-h-10 rounded-xl px-3 py-2 text-sm text-sumi/70 hover:bg-ceramic"
           >
             Ajustes
-          </a>
+          </Link>
         </div>
 
         <label className="sr-only" htmlFor="conversation-search">

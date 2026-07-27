@@ -52,6 +52,22 @@ export class InboxController {
     });
   }
 
+  /**
+   * Deep-link de Gourmetify (ex wa.me): abre/crea la conversación del
+   * teléfono y la devuelve. Cualquier rol con sesión.
+   */
+  @Post('conversations/open-by-phone')
+  async openByPhone(
+    @Body() body: { phone?: string },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    if (typeof body?.phone !== 'string' || !body.phone.trim()) {
+      throw new BadRequestException('Falta el teléfono');
+    }
+    return { conversation: await this.conversations.openByPhone(tenantId, body.phone) };
+  }
+
   /** SOLO notes: el resto del contacto lo escribe el webhook, no la UI. */
   @Patch('contacts/:id')
   async updateContactNotes(

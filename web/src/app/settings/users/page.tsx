@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Toasts } from '@/components/Toasts';
 import { api } from '@/lib/api';
@@ -81,9 +82,9 @@ export default function UsersSettings() {
     <main className="mx-auto max-w-2xl p-4">
       <header className="mb-4 flex items-end justify-between">
         <div>
-          <a href="/settings" className="text-sm text-nori hover:underline">
+          <Link href="/settings" className="text-sm text-nori hover:underline">
             ← Volver a Ajustes
-          </a>
+          </Link>
           <h1 className="text-xl font-semibold">Usuarios</h1>
         </div>
         {canManage && (

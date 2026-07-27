@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { InboxShell } from '@/components/InboxShell';
 
-export default function Home() {
-  redirect('/inbox');
+export default function InboxPage() {
+  return <InboxShell />;
 }

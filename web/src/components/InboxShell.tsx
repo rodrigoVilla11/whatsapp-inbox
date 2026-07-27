@@ -56,7 +56,7 @@ export function InboxShell() {
   // Preferencias del dispositivo + notificaciones (audio tras 1ª interacción)
   useEffect(() => {
     usePrefs.getState().hydrate();
-    return initNotifications((id) => router.push(`/inbox/${id}`));
+    return initNotifications((id) => router.push(`/c/${id}`));
   }, [router]);
 
   // Badge de no-leídos en el título de la pestaña: "(3) Inbox — Nova Sushi"
@@ -78,7 +78,7 @@ export function InboxShell() {
           setShowHelp(false);
           return;
         }
-        if (!typing && selectedId) router.push('/inbox');
+        if (!typing && selectedId) router.push('/');
         return;
       }
       if (typing) return;
@@ -100,7 +100,7 @@ export function InboxShell() {
         return;
       }
       if (e.key === 'Enter' && cursorId) {
-        router.push(`/inbox/${cursorId}`);
+        router.push(`/c/${cursorId}`);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -138,14 +138,14 @@ export function InboxShell() {
           <ConversationList
             selectedId={selectedId}
             cursorId={cursorId}
-            onSelect={(id) => router.push(`/inbox/${id}`)}
+            onSelect={(id) => router.push(`/c/${id}`)}
           />
         </aside>
 
         {/* Hilo */}
         <main className={`min-w-0 flex-1 ${selectedId ? 'block' : 'hidden md:block'}`}>
           {selectedId ? (
-            <Thread conversationId={selectedId} onBack={() => router.push('/inbox')} />
+            <Thread conversationId={selectedId} onBack={() => router.push('/')} />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
               <p className="text-sm font-medium text-sumi/70">Elegí una conversación</p>

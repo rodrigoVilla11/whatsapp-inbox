@@ -71,28 +71,28 @@ afterEach(() => {
 describe('bootstrap', () => {
   it('pide /auth/me — la ruta pre-fase-8 /me no se llama nunca', async () => {
     stubFetch((path) => {
-      if (path === '/api/auth/me') return jsonResponse(ME_RESPONSE);
-      if (path === '/api/conversations')
+      if (path === '/inbox/api/auth/me') return jsonResponse(ME_RESPONSE);
+      if (path === '/inbox/api/conversations')
         return jsonResponse({ conversations: [], nextCursor: null, timezone: 'UTC' });
       return jsonResponse([]);
     });
 
     await useInbox.getState().bootstrap();
 
-    expect(requestedPaths).toContain('/api/auth/me');
+    expect(requestedPaths).toContain('/inbox/api/auth/me');
     expect(requestedPaths).not.toContain('/me'); // ruta pre-fase-8, muerta
     expect(useInbox.getState().me?.tenantName).toBe('Nova');
   });
 
   it('401 en /auth/me → corta en silencio: redirect disparado, nada más se fetchea', async () => {
     stubFetch((path) =>
-      path === '/api/auth/me' ? jsonResponse({ message: 'no' }, 401) : jsonResponse([]),
+      path === '/inbox/api/auth/me' ? jsonResponse({ message: 'no' }, 401) : jsonResponse([]),
     );
 
     await expect(useInbox.getState().bootstrap()).resolves.toBeUndefined(); // sin throw
     expect(redirectSpy).toHaveBeenCalledTimes(1);
     expect(useInbox.getState().me).toBeNull();
-    expect(requestedPaths).toEqual(['/api/auth/me']); // ni templates ni conversaciones
+    expect(requestedPaths).toEqual(['/inbox/api/auth/me']); // ni templates ni conversaciones
   });
 });
 
