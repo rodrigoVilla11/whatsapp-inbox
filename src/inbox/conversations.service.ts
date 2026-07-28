@@ -204,14 +204,15 @@ export class ConversationsService {
       where: { tenantId, waId: digits },
     })) as Contact | null;
 
-    // La cuenta define a qué conversación pertenece; sin cuenta activa no
-    // hay chat posible.
-    const account = await db.whatsappAccount.findFirst({
-      where: { tenantId, status: 'ACTIVE' },
-    });
+    // La cuenta define a qué conversación pertenece. Se prefiere ACTIVE,
+    // pero una PENDING también sirve: el resto del sistema (webhook,
+    // envíos) no filtra por status y acá no vamos a ser más estrictos.
+    const account =
+      (await db.whatsappAccount.findFirst({ where: { tenantId, status: 'ACTIVE' } })) ??
+      (await db.whatsappAccount.findFirst({ where: { tenantId } }));
     if (!account) {
       throw new BadRequestException(
-        'No hay una cuenta de WhatsApp activa para este restaurante',
+        'Este restaurante no tiene una cuenta de WhatsApp configurada',
       );
     }
 

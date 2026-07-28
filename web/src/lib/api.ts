@@ -92,7 +92,10 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (res.status === 401) handleUnauthorized();
   if (!res.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}`);
+    // El backend siempre manda un message accionable — mostrarlo, no el status.
+    const data = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    const message = Array.isArray(data.message) ? data.message[0] : data.message;
+    throw new Error(message ?? `${init?.method ?? 'GET'} ${path} → ${res.status}`);
   }
   return (await res.json()) as T;
 }

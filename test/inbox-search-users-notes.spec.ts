@@ -146,10 +146,16 @@ describe('POST /conversations/open-by-phone (deep-link Gourmetify, ex wa.me)', (
     await expect(service.openByPhone(TENANT, 'no-es-numero')).rejects.toThrow(/inválido/);
   });
 
-  it('sin cuenta de WhatsApp ACTIVA → 400 accionable', async () => {
+  it('cuenta PENDING también sirve (el resto del sistema no filtra por status)', async () => {
     db.whatsappAccount.updateMany({ where: { id: 'acc_1' }, data: { status: 'PENDING' } });
+    const dto = (await service.openByPhone(TENANT, '5493415550004')) as { status: string };
+    expect(dto.status).toBe('OPEN');
+  });
+
+  it('sin NINGUNA cuenta → 400 accionable', async () => {
+    db.whatsappAccount.deleteMany({ where: { id: 'acc_1' } });
     await expect(service.openByPhone(TENANT, '5493415550004')).rejects.toThrow(
-      /cuenta de WhatsApp activa/,
+      /cuenta de WhatsApp configurada/,
     );
   });
 
