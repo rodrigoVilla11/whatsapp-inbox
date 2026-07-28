@@ -74,7 +74,9 @@ export class InboxController {
   ): Promise<unknown> {
     const { tenantId, userId } = getTenantContext(req);
     const filter: ConversationListFilter =
-      status === 'all' || status === 'closed' ? status : 'open';
+      status === 'all' || status === 'closed' || status === 'expiring' || status === 'unread'
+        ? status
+        : 'open';
     return this.conversations.list(tenantId, userId, {
       filter,
       assignedToMe: assignedToMe === 'true',

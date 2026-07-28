@@ -11,8 +11,10 @@ import { useNow } from '@/lib/use-now';
 import { formatCountdown, windowView } from '@/lib/window-ui';
 import { ListSkeleton } from './Skeletons';
 
-const FILTERS: Array<{ key: ListFilter; label: string }> = [
+const FILTERS: Array<{ key: ListFilter; label: string; urgent?: boolean }> = [
   { key: 'open', label: 'Abiertas' },
+  { key: 'unread', label: 'No leídos' },
+  { key: 'expiring', label: 'Por vencer', urgent: true },
   { key: 'mine', label: 'Mías' },
   { key: 'all', label: 'Todas' },
   { key: 'closed', label: 'Cerradas' },
@@ -161,19 +163,31 @@ export function ConversationList({
             Buscando en todas las conversaciones, cerradas incluidas.
           </p>
         ) : (
-          <div role="tablist" aria-label="Filtro de conversaciones" className="flex gap-1">
+          <div
+            role="tablist"
+            aria-label="Filtro de conversaciones"
+            className="flex gap-1 overflow-x-auto"
+          >
             {FILTERS.map((f) => (
               <button
                 key={f.key}
                 role="tab"
                 aria-selected={filter === f.key}
                 onClick={() => void setFilter(f.key)}
-                className={`min-h-11 flex-1 rounded-xl px-1 text-[13px] font-medium ${
+                className={`min-h-11 shrink-0 rounded-xl px-3 text-[13px] font-medium ${
                   filter === f.key
                     ? 'bg-nori text-rice'
                     : 'bg-ceramic text-sumi/75 hover:bg-nori-soft'
                 }`}
               >
+                {f.urgent && (
+                  <span
+                    aria-hidden
+                    className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                      filter === f.key ? 'bg-rice' : 'bg-gari'
+                    }`}
+                  />
+                )}
                 {f.label}
               </button>
             ))}
@@ -255,8 +269,8 @@ export function ConversationList({
                   <span className="mt-1 flex items-center gap-1.5">
                     <WindowChip conversation={c} now={now} />
                     {c.hasActiveOrder && (
-                      <span className="rounded-full bg-nori-soft px-2 py-0.5 text-[11px] font-medium text-nori">
-                        🍱 Pedido
+                      <span className="tnum rounded-full bg-nori-soft px-2 py-0.5 font-mono text-[11px] font-medium text-nori">
+                        🍱 {c.activeOrderNumber ? `#${c.activeOrderNumber}` : 'Pedido'}
                       </span>
                     )}
                     {assignedName && (
@@ -314,6 +328,12 @@ export function ConversationList({
               </>
             ) : filter === 'closed' ? (
               <p className="text-sm text-piedra">Todavía no cerraste ninguna conversación.</p>
+            ) : filter === 'expiring' ? (
+              <p className="text-sm text-piedra">
+                Nada por vencer — ninguna ventana entra en las últimas 2 horas. 🎉
+              </p>
+            ) : filter === 'unread' ? (
+              <p className="text-sm text-piedra">Todo leído — no quedan mensajes sin ver.</p>
             ) : filter === 'mine' ? (
               <p className="text-sm text-piedra">
                 No tenés conversaciones asignadas — tocá “Asignármela” en un hilo para tomarla.

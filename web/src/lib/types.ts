@@ -64,6 +64,8 @@ export interface Conversation {
   contact?: Contact | null;
   /** Solo en el listado REST (los eventos WS no lo traen; el merge lo preserva). */
   hasActiveOrder?: boolean;
+  /** Número del pedido activo más reciente ("123") — mismo origen que hasActiveOrder. */
+  activeOrderNumber?: string | null;
 }
 
 export interface Template {

@@ -57,9 +57,11 @@ describe('conversationQueryParams', () => {
     expect(conversationQueryParams({ filter: 'open' }).toString()).toBe('');
   });
 
-  it('status para all y closed', () => {
+  it('status para all, closed y las vistas nuevas', () => {
     expect(conversationQueryParams({ filter: 'all' }).get('status')).toBe('all');
     expect(conversationQueryParams({ filter: 'closed' }).get('status')).toBe('closed');
+    expect(conversationQueryParams({ filter: 'expiring' }).get('status')).toBe('expiring');
+    expect(conversationQueryParams({ filter: 'unread' }).get('status')).toBe('unread');
   });
 
   it('q se recorta y va solo si tiene contenido', () => {

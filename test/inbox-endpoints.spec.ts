@@ -187,6 +187,34 @@ describe('POST read / assign / status', () => {
     await expect(service.markUnread('otro_tenant', 'c_unread')).rejects.toThrow(NotFoundException);
   });
 
+  it('filtro "expiring": solo ventanas con < 2h restantes, ordenadas por urgencia', async () => {
+    const HOUR = 3600 * 1000;
+    seedConversation('c_23h', { lastInboundAt: new Date(NOW - 23 * HOUR) }); // vence en 1h
+    seedConversation('c_22h30', { lastInboundAt: new Date(NOW - 22.5 * HOUR) }); // vence en 1.5h
+    seedConversation('c_21h', { lastInboundAt: new Date(NOW - 21 * HOUR) }); // todavía 3h: afuera
+    seedConversation('c_25h', { lastInboundAt: new Date(NOW - 25 * HOUR) }); // ya venció: afuera
+    seedConversation('c_cerrada', {
+      status: 'CLOSED',
+      lastInboundAt: new Date(NOW - 23 * HOUR),
+    });
+
+    const result = await service.list(TENANT, null, { filter: 'expiring' });
+    const ids = (result.conversations as Array<{ id: string }>).map((c) => c.id);
+    expect(ids).toEqual(['c_23h', 'c_22h30']); // la más urgente PRIMERO
+    expect(result.nextCursor).toBeNull(); // lista de incendios: sin paginación
+  });
+
+  it('filtro "unread": abiertas con mensajes sin leer, nada más', async () => {
+    seedConversation('c_unread_2', { unreadCount: 2 });
+    seedConversation('c_leida', { unreadCount: 0 });
+    seedConversation('c_cerrada_unread', { status: 'CLOSED', unreadCount: 5 });
+
+    const result = await service.list(TENANT, null, { filter: 'unread' });
+    expect((result.conversations as Array<{ id: string }>).map((c) => c.id)).toEqual([
+      'c_unread_2',
+    ]);
+  });
+
   it('listado marca hasActiveOrder para contactos con pedido en curso', async () => {
     seedConversation('c_con_pedido', { lastMessageAt: new Date(NOW - 1000) });
     seedConversation('c_sin_pedido', { lastMessageAt: new Date(NOW - 2000) });
@@ -203,10 +231,39 @@ describe('POST read / assign / status', () => {
 
     const result = await service.list(TENANT, null, {});
     const byId = new Map(
-      (result.conversations as Array<{ id: string; hasActiveOrder: boolean }>).map((c) => [c.id, c]),
+      (
+        result.conversations as Array<{
+          id: string;
+          hasActiveOrder: boolean;
+          activeOrderNumber: string | null;
+        }>
+      ).map((c) => [c.id, c]),
     );
     expect(byId.get('c_con_pedido')!.hasActiveOrder).toBe(true);
     expect(byId.get('c_sin_pedido')!.hasActiveOrder).toBe(false); // done no cuenta
+    expect(byId.get('c_sin_pedido')!.activeOrderNumber).toBeNull();
+  });
+
+  it('el chip de la lista trae el NÚMERO del pedido activo más reciente', async () => {
+    seedConversation('c_num', { lastMessageAt: new Date(NOW) });
+    db.gourmetifyOrder.seed({
+      id: 'n_viejo', tenantId: TENANT, gourmetifyOrderId: 'n_viejo',
+      contactId: 'contact_c_num', customerPhone: 'x', number: '90',
+      statusLabel: 'Pendiente', statusKind: 'pending',
+      orderCreatedAt: new Date(NOW - 60_000),
+    });
+    db.gourmetifyOrder.seed({
+      id: 'n_nuevo', tenantId: TENANT, gourmetifyOrderId: 'n_nuevo',
+      contactId: 'contact_c_num', customerPhone: 'x', number: '91',
+      statusLabel: 'Listo', statusKind: 'ready',
+      orderCreatedAt: new Date(NOW),
+    });
+
+    const result = await service.list(TENANT, null, {});
+    const row = (result.conversations as Array<{ id: string; activeOrderNumber: string | null }>).find(
+      (c) => c.id === 'c_num',
+    )!;
+    expect(row.activeOrderNumber).toBe('91'); // el más reciente gana
   });
 
   it('assign valida que el usuario sea del tenant; null libera', async () => {

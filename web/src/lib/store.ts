@@ -40,7 +40,7 @@ import type {
   Template,
 } from './types';
 
-export type ListFilter = 'open' | 'all' | 'mine' | 'closed';
+export type ListFilter = 'open' | 'all' | 'mine' | 'closed' | 'unread' | 'expiring';
 
 /** ¿La conversación pertenece a la lista visible según el tab? (solo status —
  * el resto del filtrado es del server; esto evita que un conversation.updated
@@ -48,7 +48,12 @@ export type ListFilter = 'open' | 'all' | 'mine' | 'closed';
 function statusMatchesFilter(status: Conversation['status'], filter: ListFilter): boolean {
   if (filter === 'closed') return status === 'CLOSED';
   if (filter === 'all') return true;
-  return status !== 'CLOSED'; // open y mine
+  return status !== 'CLOSED'; // open, mine, unread, expiring
+}
+
+/** Mapea el tab de la UI al param `status` del server. */
+function apiFilterOf(filter: ListFilter): 'open' | 'all' | 'closed' | 'expiring' | 'unread' {
+  return filter === 'mine' ? 'open' : filter;
 }
 
 interface InboxState {
@@ -287,7 +292,7 @@ export const useInbox = create<InboxState>()((set, get) => {
       set({ conversationsLoading: true });
       try {
         const result = await api.listConversations({
-          filter: filter === 'all' || filter === 'closed' ? filter : 'open',
+          filter: apiFilterOf(filter),
           assignedToMe: filter === 'mine' && !!me?.userId,
           q: searchQuery,
         });
@@ -318,7 +323,7 @@ export const useInbox = create<InboxState>()((set, get) => {
       if (!nextCursor) return;
       try {
         const result = await api.listConversations({
-          filter: filter === 'all' || filter === 'closed' ? filter : 'open',
+          filter: apiFilterOf(filter),
           assignedToMe: filter === 'mine' && !!me?.userId,
           cursor: nextCursor,
           q: searchQuery,
@@ -432,13 +437,13 @@ export const useInbox = create<InboxState>()((set, get) => {
       if (!contactId) return;
       set((s) => ({
         orders: { ...s.orders, [contactId]: mergeOrder(s.orders[contactId], order) },
-        // Un pedido activo ENCIENDE el resaltado de la fila en vivo (el
-        // apagado exacto llega con el próximo listado — un solo evento no
-        // alcanza para saber si quedan otros activos).
+        // Un pedido activo ENCIENDE el resaltado y actualiza el número en
+        // vivo (el apagado exacto llega con el próximo listado — un solo
+        // evento no alcanza para saber si quedan otros activos).
         conversations: isActiveOrderKind(order.statusKind)
           ? s.conversations.map((c) =>
-              c.contactId === contactId && !c.hasActiveOrder
-                ? { ...c, hasActiveOrder: true }
+              c.contactId === contactId
+                ? { ...c, hasActiveOrder: true, activeOrderNumber: order.number ?? c.activeOrderNumber ?? null }
                 : c,
             )
           : s.conversations,

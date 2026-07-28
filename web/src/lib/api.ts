@@ -123,7 +123,7 @@ async function authPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export interface ConversationListOptions {
-  filter: 'open' | 'all' | 'closed';
+  filter: 'open' | 'all' | 'closed' | 'expiring' | 'unread';
   assignedToMe?: boolean;
   cursor?: string | null;
   q?: string | null;

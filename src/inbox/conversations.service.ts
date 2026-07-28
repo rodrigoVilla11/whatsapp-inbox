@@ -15,7 +15,12 @@ import { Cursor, decodeCursor, encodeCursor } from './cursor';
 const CONVERSATIONS_PAGE_SIZE = 30;
 const MESSAGES_PAGE_SIZE = 50;
 
-export type ConversationListFilter = 'open' | 'closed' | 'all';
+// Vista "Por vencer": mismo umbral que el chip gari de la UI (< 2h de las
+// 24h de ventana — ver messaging/window.ts y web window-ui.ts).
+const WINDOW_MS = 24 * 60 * 60 * 1000;
+const EXPIRING_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+export type ConversationListFilter = 'open' | 'closed' | 'all' | 'expiring' | 'unread';
 
 @Injectable()
 export class ConversationsService {
@@ -45,13 +50,30 @@ export class ConversationsService {
 
     // Búsqueda: cruza TODOS los estados (quien busca "María" quiere
     // encontrarla aunque la conversación esté cerrada); sin q, rige el filtro.
+    const now = Date.now();
     const statusWhere: Prisma.ConversationWhereInput = q
       ? {}
       : options.filter === 'all'
         ? {}
         : options.filter === 'closed'
           ? { status: 'CLOSED' }
-          : { status: { in: ['OPEN', 'PENDING'] } }; // default
+          : options.filter === 'unread'
+            ? { status: { in: ['OPEN', 'PENDING'] }, unreadCount: { gt: 0 } }
+            : options.filter === 'expiring'
+              ? {
+                  // ventana abierta con < 2h restantes: lastInboundAt entre
+                  // 22 y 24 horas atrás
+                  status: { in: ['OPEN', 'PENDING'] },
+                  lastInboundAt: {
+                    gt: new Date(now - WINDOW_MS),
+                    lte: new Date(now - (WINDOW_MS - EXPIRING_THRESHOLD_MS)),
+                  },
+                }
+              : { status: { in: ['OPEN', 'PENDING'] } }; // default
+
+    // "Por vencer" ordena por URGENCIA (la más cerca de vencer primero) y
+    // no pagina: es una lista de incendios, no un archivo.
+    const expiring = !q && options.filter === 'expiring';
 
     let searchContactIds: string[] | null = null;
     if (q) {
@@ -68,15 +90,17 @@ export class ConversationsService {
         ...statusWhere,
         ...(searchContactIds ? { contactId: { in: searchContactIds } } : {}),
         ...(options.assignedToMe && userId ? { assignedUserId: userId } : {}),
-        ...(cursor ? { AND: [this.cursorWhere(cursor, 'lastMessageAt')] } : {}),
+        ...(cursor && !expiring ? { AND: [this.cursorWhere(cursor, 'lastMessageAt')] } : {}),
       },
-      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+      orderBy: expiring
+        ? [{ lastInboundAt: 'asc' }, { id: 'desc' }]
+        : [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
       take: CONVERSATIONS_PAGE_SIZE + 1,
     })) as Conversation[];
 
     const page = rows.slice(0, CONVERSATIONS_PAGE_SIZE);
     const nextCursor =
-      rows.length > CONVERSATIONS_PAGE_SIZE
+      !expiring && rows.length > CONVERSATIONS_PAGE_SIZE
         ? encodeCursor({
             t: page[page.length - 1].lastMessageAt?.toISOString() ?? null,
             id: page[page.length - 1].id,
@@ -90,15 +114,23 @@ export class ConversationsService {
     })) as Contact[];
     const contactById = new Map(contacts.map((c) => [c.id, c]));
 
-    // Pedido activo de Gourmetify → la fila se resalta en la lista.
+    // Pedido activo de Gourmetify → la fila se resalta y muestra el número
+    // (del activo MÁS RECIENTE del contacto).
     const activeOrders = await db.gourmetifyOrder.findMany({
       where: {
         tenantId,
         contactId: { in: contactIds },
         statusKind: { in: ['pending', 'in_progress', 'ready'] },
       },
+      orderBy: [{ orderCreatedAt: 'desc' }],
     });
-    const withActiveOrder = new Set(activeOrders.map((o) => o.contactId as string));
+    const activeByContact = new Map<string, string | null>();
+    for (const order of activeOrders) {
+      const contactId = order.contactId as string;
+      if (!activeByContact.has(contactId)) {
+        activeByContact.set(contactId, (order.number as string | null) ?? null);
+      }
+    }
 
     const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
 
@@ -108,7 +140,8 @@ export class ConversationsService {
           string,
           unknown
         >),
-        hasActiveOrder: withActiveOrder.has(c.contactId),
+        hasActiveOrder: activeByContact.has(c.contactId),
+        activeOrderNumber: activeByContact.get(c.contactId) ?? null,
       })),
       nextCursor,
       timezone: tenant?.timezone ?? 'UTC',
