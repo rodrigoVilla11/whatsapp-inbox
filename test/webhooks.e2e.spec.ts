@@ -101,6 +101,16 @@ describe('Webhooks (e2e)', () => {
       expect(res.text).toBe('1158201444'); // NO '"1158201444"'
     });
 
+    it('acepta el prefijo /inbox/api (shim de la integración Gourmetify)', async () => {
+      // Easypanel no reescribe el path destino: la API normaliza
+      // /inbox/api/* → /api/* nativamente (configureApp).
+      const res = await request(server)
+        .get('/inbox/api/webhooks/whatsapp')
+        .query({ 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY_TOKEN, 'hub.challenge': '77' })
+        .expect(200);
+      expect(res.text).toBe('77');
+    });
+
     it('acepta también la ruta con :ref explícito', async () => {
       const res = await request(server)
         .get('/api/webhooks/whatsapp/default')

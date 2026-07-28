@@ -152,7 +152,7 @@ describe('InboxGateway (integración con Redis real)', () => {
   /** La cookie de sesión viaja en los headers del upgrade, como en el browser. */
   function connect(sessionToken?: string): ClientSocket {
     const socket = io(`${baseUrl}/inbox`, {
-      path: '/api/socket.io', // un solo origen (10b): mismo path que el cliente real
+      path: '/inbox/api/socket.io', // el path literal del gateway (integración Gourmetify)
       transports: ['websocket'],
       reconnection: false,
       ...(sessionToken

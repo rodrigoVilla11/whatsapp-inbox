@@ -1,8 +1,13 @@
 # Integración con GOURMETIFY
 
-El inbox vive bajo el dominio de Gourmetify en el path `/inbox` (sin iframe,
-sin CORS: mismo origen). Este doc es el contrato completo — lo que se toca en
-Gourmetify es UNA cosa: los links.
+El inbox vive en `https://inbox.gourmetify.pro/inbox` (host propio + path
+`/inbox`; sin iframe, sin CORS). Este doc es el contrato completo — lo que
+se toca en Gourmetify es UNA cosa: los links.
+
+> Nota de por qué subdominio y no `gourmetify.pro/inbox`: el Traefik de este
+> Easypanel no respeta reglas por path cuando el host está declarado en un
+> servicio de OTRO proyecto (verificado empíricamente — hasta un path de
+> prueba caía en la app de Gourmetify). Con host propio no hay conflicto.
 
 ## 1. Reemplazo de la redirección a WhatsApp Web
 
@@ -15,7 +20,7 @@ https://wa.me/<telefono>?text=<mensaje-urlencoded>
 pasa a generar (mismos valores, solo cambia host y path):
 
 ```
-https://<dominio-gourmetify>/inbox/whatsapp?phone=<telefono>&text=<mensaje-urlencoded>
+https://inbox.gourmetify.pro/inbox/whatsapp?phone=<telefono>&text=<mensaje-urlencoded>
 ```
 
 - `phone`: dígitos internacionales sin `+` (formato wa.me tal cual:
@@ -28,29 +33,31 @@ https://<dominio-gourmetify>/inbox/whatsapp?phone=<telefono>&text=<mensaje-urlen
 - `target="_blank"` o misma pestaña: decisión de UX de Gourmetify, ambas
   funcionan.
 
-## 2. Ruteo en Easypanel (dominio de Gourmetify)
+## 2. DNS + ruteo en Easypanel
 
-Dos reglas nuevas, cada una creada DENTRO del servicio del inbox
-correspondiente (el destino siempre es el contenedor del servicio dueño de
-la regla):
+**DNS** (zona de `gourmetify.pro`): registro **A** `inbox` → IP del VPS
+(`72.60.240.232`). Sin proxy intermedio.
+
+**Reglas** — cada una creada DENTRO del servicio del inbox correspondiente,
+destino siempre con protocolo **HTTP** (el TLS público lo maneja el proxy):
 
 | Servicio | Host | Ruta | Destino puerto | Destino Ruta |
 |---|---|---|---|---|
-| `inbox-api` | `<dominio-gourmetify>` | `/inbox/api` | `3001` | `/api` |
-| `inbox-web` | `<dominio-gourmetify>` | `/inbox` | `3000` | `/inbox` |
+| `inbox-api` | `inbox.gourmetify.pro` | `/inbox/api` | `3001` | `/api` |
+| `inbox-web` | `inbox.gourmetify.pro` | `/inbox` | `3000` | `/inbox` |
 
 - El path más largo gana: `/inbox/api/*` va a la API (reescrito a `/api/*`),
   el resto de `/inbox/*` al Next (que sirve con `basePath: '/inbox'`).
 - El WebSocket entra por `/inbox/api/socket.io` y el rewrite lo lleva al
   path real del gateway — Traefik maneja el upgrade con la misma regla.
-- Las reglas existentes de Gourmetify (su `/`, su propio `/api`, etc.) no se
-  tocan: `/inbox*` es un prefijo nuevo que no colisiona.
+- El certificado Let's Encrypt del subdominio lo emite Easypanel solo, una
+  vez que el DNS resuelve.
 
 ## 3. URLs resultantes
 
-- Inbox: `https://<dominio>/inbox` (lista), `/inbox/c/<id>` (hilo),
-  `/inbox/login`, `/inbox/settings`.
-- API/healthcheck: `https://<dominio>/inbox/api/health/ready`.
+- Inbox: `https://inbox.gourmetify.pro/inbox` (lista), `/inbox/c/<id>`
+  (hilo), `/inbox/login`, `/inbox/settings`.
+- API/healthcheck: `https://inbox.gourmetify.pro/inbox/api/health/ready`.
 - Webhook de Meta: **sin cambios** — sigue en el host original
   (`https://<subdominio-actual>/api/webhooks/whatsapp`); no pasa por el
   frontend ni por el dominio de Gourmetify. Migrarlo al dominio final es

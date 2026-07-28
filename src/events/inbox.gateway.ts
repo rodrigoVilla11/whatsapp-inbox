@@ -24,9 +24,11 @@ import { DOMAIN_EVENTS_CHANNEL, DomainEvent, tenantRoom } from './domain-events'
  */
 @WebSocketGateway({
   namespace: '/inbox',
-  // Un solo origen (fase 10b): el handshake de socket.io vive bajo /api
-  // para que el proxy lo rutee al servicio API con una sola regla de path.
-  path: '/api/socket.io',
+  // El handshake de socket.io vive bajo /inbox/api: el upgrade NO pasa por
+  // el shim de Express (socket.io intercepta a nivel del server HTTP), así
+  // que el path del server debe ser EXACTAMENTE el que manda el browser a
+  // través del proxy — sin depender de rewrites de Easypanel.
+  path: '/inbox/api/socket.io',
   // corsOrigins() lee env al evaluar el decorador — main.ts importa
   // dotenv/config antes que AppModule para que ya esté cargado.
   cors: { origin: corsOrigins(), credentials: true },

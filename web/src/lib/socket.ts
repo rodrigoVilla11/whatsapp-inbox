@@ -27,11 +27,10 @@ export function connectInboxSocket(): () => void {
   refs += 1;
   if (!socket) {
     // withCredentials: la cookie de sesión autentica el handshake (fase 8).
-    // Path: en prod (mismo origen) el upgrade entra por /inbox/api/socket.io
-    // y el proxy lo reescribe a /api/socket.io (el path del server); en dev
-    // se conecta directo a la API sin basePath.
+    // Path /inbox/api/socket.io SIEMPRE (dev directo y prod vía proxy): es
+    // el path literal del gateway — sin rewrites de por medio.
     const s = io(`${API_ORIGIN}/inbox`, {
-      path: API_ORIGIN ? '/api/socket.io' : `${BASE_PATH}/api/socket.io`,
+      path: `${BASE_PATH}/api/socket.io`,
       transports: ['websocket'],
       withCredentials: true,
     });
