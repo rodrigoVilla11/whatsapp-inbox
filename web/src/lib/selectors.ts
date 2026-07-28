@@ -1,3 +1,4 @@
+import type { OrdersBundle } from './order-ui';
 import type { Message } from './types';
 
 /**
@@ -17,4 +18,12 @@ export const EMPTY_MESSAGES: ReadonlyArray<Message> = [];
 export function selectMessages(conversationId: string) {
   return (s: { messages: Record<string, Message[]> }): ReadonlyArray<Message> =>
     s.messages[conversationId] ?? EMPTY_MESSAGES;
+}
+
+export const EMPTY_ORDERS: OrdersBundle = { active: [], recent: [] };
+
+/** Pedidos del contacto; misma garantía de referencia estable. */
+export function selectOrders(contactId: string | null | undefined) {
+  return (s: { orders: Record<string, OrdersBundle> }): OrdersBundle =>
+    (contactId ? s.orders[contactId] : undefined) ?? EMPTY_ORDERS;
 }

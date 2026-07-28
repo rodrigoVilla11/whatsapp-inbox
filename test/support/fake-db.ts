@@ -264,6 +264,7 @@ export interface FakeDb {
   message: FakeModel;
   messageTemplate: FakeModel;
   quickReply: FakeModel;
+  gourmetifyOrder: FakeModel;
   $transaction<T>(fn: (tx: FakeDb) => Promise<T>): Promise<T>;
 }
 
@@ -349,6 +350,18 @@ export function createFakeDb(): FakeDb {
       [['tenantId', 'whatsappAccountId', 'name', 'language']],
     ),
     quickReply: new FakeModel('qr', { isActive: true }, [['tenantId', 'shortcut']]),
+    gourmetifyOrder: new FakeModel(
+      'gord',
+      {
+        contactId: null,
+        number: null,
+        summary: null,
+        totalLabel: null,
+        deliveryLabel: null,
+        scheduledLabel: null,
+      },
+      [['tenantId', 'gourmetifyOrderId']],
+    ),
     $transaction: async (fn) => fn(db),
   };
   return db;

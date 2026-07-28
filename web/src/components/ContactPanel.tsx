@@ -1,9 +1,40 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { orderChipClasses } from '@/lib/order-ui';
+import { selectOrders } from '@/lib/selectors';
 import { useInbox } from '@/lib/store';
 import { toast } from '@/lib/toast';
+import type { GourmetifyOrder } from '@/lib/types';
 import { usePending } from '@/lib/use-pending';
+
+/** Card de pedido (activo = completa; cerrado = compacta). */
+function OrderCard({ order, compact = false }: { order: GourmetifyOrder; compact?: boolean }) {
+  return (
+    <div className={`rounded-xl border border-line bg-rice ${compact ? 'px-3 py-2' : 'p-3'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="tnum font-mono text-xs font-medium text-sumi/80">
+          {order.number ? `#${order.number}` : 'Pedido'}
+        </span>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${orderChipClasses(order.statusKind)}`}
+        >
+          {order.statusLabel}
+        </span>
+      </div>
+      {!compact && order.summary && (
+        <p className="mt-1.5 whitespace-pre-wrap text-sm text-sumi/85">{order.summary}</p>
+      )}
+      {!compact && (order.totalLabel || order.scheduledLabel || order.deliveryLabel) && (
+        <p className="tnum mt-1.5 font-mono text-xs text-piedra">
+          {[order.totalLabel, order.deliveryLabel, order.scheduledLabel]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      )}
+    </div>
+  );
+}
 
 const NOTES_DEBOUNCE_MS = 800;
 
@@ -18,6 +49,10 @@ export function ContactPanel({
   compact?: boolean;
 }) {
   const conversation = useInbox((s) => s.conversations.find((c) => c.id === conversationId));
+  const panelContactId = useInbox(
+    (s) => s.conversations.find((c) => c.id === conversationId)?.contact?.id ?? null,
+  );
+  const orders = useInbox(selectOrders(panelContactId));
   const me = useInbox((s) => s.me);
   const assign = useInbox((s) => s.assign);
   const setStatus = useInbox((s) => s.setConversationStatus);
@@ -96,6 +131,30 @@ export function ContactPanel({
           </span>
           <span className="sr-only">Copiar teléfono</span>
         </button>
+      )}
+
+      {/* Pedidos de Gourmetify: sin integración/pedidos, la sección no existe */}
+      {(orders.active.length > 0 || orders.recent.length > 0) && (
+        <div>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-piedra">
+            Pedidos
+          </h3>
+          <div className="space-y-2">
+            {orders.active.map((order) => (
+              <OrderCard key={order.id} order={order} />
+            ))}
+            {orders.recent.length > 0 && (
+              <div className="space-y-1.5">
+                {orders.active.length > 0 && (
+                  <p className="text-[11px] text-piedra">Anteriores</p>
+                )}
+                {orders.recent.map((order) => (
+                  <OrderCard key={order.id} order={order} compact />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <dl className="space-y-1 text-sm">

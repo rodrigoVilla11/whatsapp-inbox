@@ -14,7 +14,11 @@
 
 export const DOMAIN_EVENTS_CHANNEL = 'domain-events';
 
-export type DomainEventType = 'message.created' | 'message.updated' | 'conversation.updated';
+export type DomainEventType =
+  | 'message.created'
+  | 'message.updated'
+  | 'conversation.updated'
+  | 'order.updated';
 
 /** Sobre que viaja por Redis. occurredAt lo estampa el publisher. */
 export interface DomainEvent<T = unknown> {
@@ -47,6 +51,12 @@ export interface MessageUpdatedPayload {
 /** Estado completo de la conversación (la UI reemplaza, no mergea). */
 export interface ConversationUpdatedPayload {
   conversation: Record<string, unknown>;
+}
+
+/** Pedido de Gourmetify creado/actualizado (la UI upsertea por id). */
+export interface OrderUpdatedPayload {
+  order: Record<string, unknown>;
+  contactId: string | null;
 }
 
 // ── Publisher ───────────────────────────────────────────────────────────

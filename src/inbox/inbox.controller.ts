@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { MinRole, roleAtLeast, RolesGuard } from '../auth/roles';
+import { GourmetifyOrdersService } from '../gourmetify/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getTenantContext } from '../tenant/tenant-context';
 import { ConversationListFilter, ConversationsService } from './conversations.service';
@@ -30,8 +31,19 @@ export class InboxController {
   constructor(
     private readonly conversations: ConversationsService,
     private readonly quickReplies: QuickRepliesService,
+    private readonly orders: GourmetifyOrdersService,
     private readonly prisma: PrismaService,
   ) {}
+
+  /** Pedidos de Gourmetify del contacto: activos + últimos 3 cerrados. */
+  @Get('conversations/:id/orders')
+  async conversationOrders(
+    @Param('id') conversationId: string,
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return this.orders.listForConversation(tenantId, conversationId);
+  }
 
   @Get('conversations')
   async list(

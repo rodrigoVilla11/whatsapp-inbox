@@ -146,7 +146,47 @@ GET /provisioning/tenants/<gourmetifyTenantId>/whatsapp
 6. Con la respuesta: pegar Callback URL + verify token en la config del
    webhook de su app en Meta y suscribirse al campo `messages`.
 
-## 5. Pendiente para después (anotado, no implementado)
+## 5. Pedidos en el chat (webhook Gourmetify → inbox)
+
+La cajera ve el pedido del cliente y su estado EN VIVO al lado del chat.
+Modelo push: Gourmetify avisa al inbox al **crear un pedido y en cada
+cambio de estado**. Mismo auth que el provisioning (`x-provisioning-key`).
+
+```
+POST /gourmetify/orders
+{
+  "gourmetifyTenantId": "<id del cliente en Gourmetify>",
+  "order": {
+    "id": "<id único del pedido en Gourmetify>",
+    "number": "123",                        // opcional, display
+    "customerPhone": "5493415551234",       // dígitos internacionales
+    "statusLabel": "En preparación",        // texto listo para mostrar
+    "statusKind": "in_progress",            // pending|in_progress|ready|done|cancelled
+    "summary": "2x Roll Nova, 1x Sésamo",   // opcional, display
+    "totalLabel": "$ 18.500",               // opcional, display
+    "deliveryLabel": "Retiro en local",     // opcional, display
+    "scheduledLabel": "Retira 21:30",       // opcional, display
+    "createdAt": "2026-07-28T20:00:00Z"     // ISO, para ordenar
+  }
+}
+→ 200 { ok: true, order: {...} }
+```
+
+Reglas:
+- **Display-ready**: los `*Label` se muestran tal cual (moneda, idioma y
+  formato los decide Gourmetify). `statusKind` es lo ÚNICO que el inbox
+  interpreta (color del chip y partición activo/cerrado).
+- **Idempotente** por `(gourmetifyTenantId, order.id)`: reintentos y
+  actualizaciones de estado repiten el mismo POST con el estado nuevo.
+- **Best-effort con 1 retry**: si el inbox no responde, loguear y seguir —
+  el flujo de pedidos de Gourmetify JAMÁS se frena por esto. El inbox se
+  pone al día con el próximo estado.
+- Solo para restaurantes con el inbox habilitado (mismo flag del §
+  redirección condicional).
+- Errores: 404 tenant desconocido, 400 con detalle (statusKind inválido,
+  fechas mal formadas).
+
+## 6. Pendiente para después (anotado, no implementado)
 
 - **SSO**: hoy la cajera se loguea una vez en el inbox (cookie 30 días).
   El gancho `User.gourmetifyUserId` ya existe para que, cuando se quiera,

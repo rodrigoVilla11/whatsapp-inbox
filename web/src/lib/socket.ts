@@ -4,7 +4,7 @@ import { io, type Socket } from 'socket.io-client';
 import { API_ORIGIN, BASE_PATH } from './api';
 import { notifyInbound } from './notify';
 import { useInbox } from './store';
-import type { MessageCreatedEvent } from './types';
+import type { MessageCreatedEvent, OrderUpdatedEvent } from './types';
 
 let socket: Socket | null = null;
 let refs = 0;
@@ -51,6 +51,7 @@ export function connectInboxSocket(): () => void {
     });
     s.on('message.updated', (payload) => store().onMessageUpdated(payload));
     s.on('conversation.updated', (payload) => store().onConversationUpdated(payload));
+    s.on('order.updated', (payload: OrderUpdatedEvent) => store().onOrderUpdated(payload));
   }
 
   let released = false;

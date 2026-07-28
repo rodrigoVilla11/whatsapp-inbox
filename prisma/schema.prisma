@@ -56,6 +56,7 @@ model Tenant {
   messages         Message[]
   templates        MessageTemplate[]
   quickReplies     QuickReply[]
+  gourmetifyOrders GourmetifyOrder[]
 }
 
 model WhatsappAccount {
@@ -196,6 +197,33 @@ model Conversation {
   @@index([tenantId, assignedUserId, lastMessageAt(sort: Desc)])
   @@index([tenantId, lastInboundAt])
   @@index([tenantId, orderId])
+}
+
+// Pedido de Gourmetify espejado en el inbox (ingesta por webhook, fase
+// "pedidos en el chat"). Contrato display-ready: los *Label son texto listo
+// para mostrar; statusKind es lo ÚNICO que el inbox interpreta.
+model GourmetifyOrder {
+  id                String   @id @default(cuid())
+  tenantId          String
+  gourmetifyOrderId String
+  contactId         String? // se linkea por teléfono cuando el contacto existe
+  customerPhone     String // dígitos internacionales (formato waId)
+  number            String?
+  statusLabel       String
+  statusKind        String // pending | in_progress | ready | done | cancelled
+  summary           String?
+  totalLabel        String?
+  deliveryLabel     String?
+  scheduledLabel    String?
+  orderCreatedAt    DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, gourmetifyOrderId])
+  @@index([tenantId, contactId])
+  @@index([tenantId, customerPhone])
 }
 
 model Message {

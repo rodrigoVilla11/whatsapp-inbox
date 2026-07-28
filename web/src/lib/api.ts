@@ -3,6 +3,7 @@ import type {
   AuthUser,
   Contact,
   Conversation,
+  GourmetifyOrder,
   ManagedUser,
   Me,
   Message,
@@ -38,6 +39,7 @@ export const API_ROUTES = {
   conversations: '/conversations',
   conversationOpenByPhone: '/conversations/open-by-phone',
   conversationMessages: (id: string) => `/conversations/${id}/messages`,
+  conversationOrders: (id: string) => `/conversations/${id}/orders`,
   conversationRead: (id: string) => `/conversations/${id}/read`,
   conversationAssign: (id: string) => `/conversations/${id}/assign`,
   conversationStatus: (id: string) => `/conversations/${id}/status`,
@@ -194,6 +196,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ notes }),
     }),
+
+  listOrders: (conversationId: string) =>
+    json<{ active: GourmetifyOrder[]; recent: GourmetifyOrder[] }>(
+      API_ROUTES.conversationOrders(conversationId),
+    ),
 
   listMessages: (conversationId: string, cursor?: string) =>
     json<{ messages: Message[]; nextCursor: string | null }>(

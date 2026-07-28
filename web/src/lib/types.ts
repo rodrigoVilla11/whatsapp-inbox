@@ -125,6 +125,31 @@ export interface SendResult extends SendEnvelope {
   httpStatus: number;
 }
 
+/**
+ * Pedido de Gourmetify espejado en el inbox (contrato display-ready: los
+ * *Label se muestran tal cual; statusKind es lo único que la UI interpreta).
+ */
+export type OrderStatusKind = 'pending' | 'in_progress' | 'ready' | 'done' | 'cancelled';
+
+export interface GourmetifyOrder {
+  id: string;
+  gourmetifyOrderId: string;
+  contactId: string | null;
+  number: string | null;
+  statusLabel: string;
+  statusKind: OrderStatusKind;
+  summary: string | null;
+  totalLabel: string | null;
+  deliveryLabel: string | null;
+  scheduledLabel: string | null;
+  orderCreatedAt: string;
+}
+
+export interface OrderUpdatedEvent {
+  order: GourmetifyOrder;
+  contactId: string | null;
+}
+
 // Eventos WS (contrato fase 6)
 export interface MessageCreatedEvent {
   conversationId: string;

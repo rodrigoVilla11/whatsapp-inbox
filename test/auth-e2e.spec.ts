@@ -22,6 +22,7 @@ import { SessionsService } from '../src/auth/sessions.service';
 import { UsersController } from '../src/auth/users.controller';
 import { UsersService } from '../src/auth/users.service';
 import { DOMAIN_EVENT_PUBLISHER } from '../src/events/domain-events';
+import { GourmetifyOrdersService } from '../src/gourmetify/orders.service';
 import { ConversationsService } from '../src/inbox/conversations.service';
 import { InboxController } from '../src/inbox/inbox.controller';
 import { QuickRepliesService } from '../src/inbox/quick-replies.service';
@@ -98,6 +99,7 @@ beforeAll(async () => {
       UsersService,
       ConversationsService,
       QuickRepliesService,
+      GourmetifyOrdersService, // InboxController lo inyecta (pedidos en el chat)
       { provide: PrismaService, useValue: prisma },
       {
         // rate limiter sobre el Redis del compose (integración real)

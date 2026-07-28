@@ -24,6 +24,7 @@ import {
   startSend,
 } from './composer';
 import { applyMessageChanges, sortMessages, upsertConversation, upsertMessage } from './merge';
+import { mergeOrder, type OrdersBundle } from './order-ui';
 import { createDebounce, SEARCH_DEBOUNCE_MS } from './search';
 import type {
   AgentUser,
@@ -33,6 +34,7 @@ import type {
   Message,
   MessageCreatedEvent,
   MessageUpdatedEvent,
+  OrderUpdatedEvent,
   QuickReply,
   SendResult,
   Template,
@@ -65,6 +67,8 @@ interface InboxState {
   /** Mensajes por conversación, ascendentes por timestamp. */
   messages: Record<string, Message[]>;
   messagesCursor: Record<string, string | null>;
+  /** Pedidos de Gourmetify por CONTACTO (activos + últimos cerrados). */
+  orders: Record<string, OrdersBundle>;
   templates: Template[];
   quickReplies: QuickReply[];
   /** Estado de envío por mensaje local/real (key = clientDedupKey). */
@@ -86,6 +90,8 @@ interface InboxState {
   onMessageCreated(event: MessageCreatedEvent): void;
   onMessageUpdated(event: MessageUpdatedEvent): void;
   onConversationUpdated(event: ConversationUpdatedEvent): void;
+  onOrderUpdated(event: OrderUpdatedEvent): void;
+  loadOrders(conversationId: string): Promise<void>;
 
   sendText(conversationId: string, body: string): Promise<void>;
   sendTemplate(conversationId: string, templateId: string, params: string[], preview: string): Promise<void>;
@@ -218,6 +224,7 @@ export const useInbox = create<InboxState>()((set, get) => {
     selectedId: null,
     messages: {},
     messagesCursor: {},
+    orders: {},
     templates: [],
     quickReplies: [],
     outbox: {},
@@ -335,6 +342,8 @@ export const useInbox = create<InboxState>()((set, get) => {
           },
           messagesCursor: { ...s.messagesCursor, [conversationId]: page.nextCursor },
         }));
+        // Pedidos del contacto: en paralelo, sin bloquear el hilo.
+        void get().loadOrders(conversationId);
         const conversation = get().conversations.find((c) => c.id === conversationId);
         if (conversation && conversation.unreadCount > 0) {
           await get().markRead(conversationId);
@@ -342,6 +351,19 @@ export const useInbox = create<InboxState>()((set, get) => {
       } catch (error) {
         if (isUnauthorized(error)) return; // redirect en curso
         set({ lastError: 'No pudimos abrir la conversación — reintentá.' });
+      }
+    },
+
+    /** Pedidos de Gourmetify del contacto — feature opcional: falla en silencio. */
+    async loadOrders(conversationId) {
+      const conversation = get().conversations.find((c) => c.id === conversationId);
+      const contactId = conversation?.contact?.id;
+      if (!contactId) return;
+      try {
+        const bundle = await api.listOrders(conversationId);
+        set((s) => ({ orders: { ...s.orders, [contactId]: bundle } }));
+      } catch {
+        // sin integración de pedidos (o error transitorio): el panel no aparece
       }
     },
 
@@ -375,6 +397,7 @@ export const useInbox = create<InboxState>()((set, get) => {
             messages: { ...s.messages, [selected]: sortMessages([...page.messages].reverse()) },
             messagesCursor: { ...s.messagesCursor, [selected]: page.nextCursor },
           }));
+          void get().loadOrders(selected); // pedidos también, sin bloquear
         }
       } catch (error) {
         if (isUnauthorized(error)) return; // redirect en curso, silencio
@@ -397,6 +420,15 @@ export const useInbox = create<InboxState>()((set, get) => {
           ...s.messages,
           [conversationId]: applyMessageChanges(s.messages[conversationId] ?? [], id, changes),
         },
+      }));
+    },
+
+    onOrderUpdated({ order, contactId }) {
+      // Sin contacto linkeado todavía no hay dónde colgarlo; aparece en el
+      // próximo loadOrders (que además backfillea el link server-side).
+      if (!contactId) return;
+      set((s) => ({
+        orders: { ...s.orders, [contactId]: mergeOrder(s.orders[contactId], order) },
       }));
     },
 

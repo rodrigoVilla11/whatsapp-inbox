@@ -22,6 +22,7 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Message',
   'MessageTemplate',
   'QuickReply',
+  'GourmetifyOrder',
 ]);
 
 export class MissingTenantScopeError extends Error {

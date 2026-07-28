@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { initialOf } from '@/lib/format';
 import { validateFile } from '@/lib/media-constants';
-import { selectMessages } from '@/lib/selectors';
+import { activeOrderChip, orderChipClasses } from '@/lib/order-ui';
+import { selectMessages, selectOrders } from '@/lib/selectors';
 import { useInbox } from '@/lib/store';
 import { buildThreadItems } from '@/lib/thread-items';
 import { toast } from '@/lib/toast';
@@ -54,6 +55,11 @@ export function Thread({
   const sendMedia = useInbox((s) => s.sendMedia);
   const setStatus = useInbox((s) => s.setConversationStatus);
   const timezone = useInbox((s) => s.timezone);
+  // Pedido activo de Gourmetify (referencia estable vía selector compartido)
+  const contactId = useInbox(
+    (s) => s.conversations.find((c) => c.id === conversationId)?.contact?.id ?? null,
+  );
+  const ordersBundle = useInbox(selectOrders(contactId));
   const [showContact, setShowContact] = useState(false);
   const statusAction = usePending();
 
@@ -235,6 +241,20 @@ export function Thread({
                 {conversation.contact?.phoneE164 ?? conversation.contact?.waId}
               </span>
             </span>
+            {/* Pedido activo de Gourmetify: estado EN VIVO, tap = ver detalle */}
+            {(() => {
+              const chip = activeOrderChip(ordersBundle.active);
+              if (!chip) return null;
+              return (
+                <span
+                  className={`ml-auto shrink-0 truncate rounded-full px-2.5 py-1 text-[11px] ${orderChipClasses(chip.order.statusKind)}`}
+                >
+                  {chip.order.number ? `#${chip.order.number} · ` : ''}
+                  {chip.order.statusLabel}
+                  {chip.extra > 0 ? ` +${chip.extra}` : ''}
+                </span>
+              );
+            })()}
           </button>
 
           <AssignMenu conversation={conversation} />
