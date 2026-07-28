@@ -269,7 +269,11 @@ export interface FakeDb {
 
 export function createFakeDb(): FakeDb {
   const db: FakeDb = {
-    tenant: new FakeModel('ten', { status: 'ACTIVE', timezone: 'America/Argentina/Buenos_Aires' }, [['slug']]),
+    tenant: new FakeModel(
+      'ten',
+      { status: 'ACTIVE', timezone: 'America/Argentina/Buenos_Aires', gourmetifyTenantId: null },
+      [['slug'], ['gourmetifyTenantId']],
+    ),
     metaApp: new FakeModel('app', { graphVersion: null }, [['ref'], ['appId']]),
     whatsappAccount: new FakeModel('acc', {}, [['phoneNumberId']]),
     user: new FakeModel(

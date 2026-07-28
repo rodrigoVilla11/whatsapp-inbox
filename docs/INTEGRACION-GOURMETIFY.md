@@ -64,7 +64,89 @@ destino siempre con protocolo **HTTP** (el TLS público lo maneja el proxy):
   opcional (un solo cambio de Callback URL en el panel de Meta cuando se
   quiera).
 
-## 4. Pendiente para después (anotado, no implementado)
+## 4. API de provisioning (Gourmetify → inbox, servicio-a-servicio)
+
+Para que cada cliente de Gourmetify tenga su tenant y conecte SU WhatsApp
+con credenciales propias (puente hasta que Meta apruebe el Embedded
+Signup). Auth: header `x-provisioning-key: <PROVISIONING_SECRET>` (misma
+env en ambos backends; sin ella los endpoints dan 503). Base:
+`https://inbox.gourmetify.pro/inbox/api`.
+
+### 4.1 Alta de tenant (idempotente por `gourmetifyTenantId`)
+
+```
+POST /provisioning/tenants
+{
+  "gourmetifyTenantId": "<id del cliente en Gourmetify>",
+  "name": "La Parrilla de Ana",
+  "timezone": "Europe/Madrid",            // opcional
+  "owner": {
+    "email": "ana@parrilla.es",
+    "name": "Ana",
+    "password": "opcional-min-10"          // si falta, se genera
+  }
+}
+→ 201 { created, tenant: {id, slug, name, timezone, gourmetifyTenantId},
+        owner: { email, name, initialPassword? } }
+```
+
+- `initialPassword` viene SOLO si se generó, SOLO en esta respuesta:
+  Gourmetify se la muestra al dueño una única vez. El primer login fuerza
+  el cambio.
+- Repetir el POST con el mismo `gourmetifyTenantId` actualiza nombre/tz y
+  devuelve `created: false` — seguro para retries.
+
+### 4.2 Conectar WhatsApp del cliente
+
+El cliente (guiado por la UI de Gourmetify) crea su app en Meta y junta:
+App ID, App Secret, Phone Number ID, WABA ID y un access token de system
+user (permanente, permisos `whatsapp_business_messaging` +
+`whatsapp_business_management`).
+
+```
+PUT /provisioning/tenants/<gourmetifyTenantId>/whatsapp
+{
+  "metaAppId": "…", "metaAppSecret": "…",
+  "phoneNumberId": "…", "wabaId": "…",
+  "accessToken": "…",
+  "displayPhone": "+34 …",                // opcional (se toma de Meta)
+  "verifyToken": "…"                      // opcional (se genera)
+}
+→ 200 { connected: true, tenant, account: {phoneNumberId, wabaId,
+        displayPhoneNumber, status}, webhook: { path, url, verifyToken } }
+```
+
+- **Valida EN VIVO contra Graph API antes de guardar**: token vencido o
+  phone_number_id ajeno → 400 con el mensaje de Meta textual.
+- Los secretos se cifran (AES-GCM) y **jamás vuelven en una respuesta**.
+- `webhook.url` + `webhook.verifyToken` son lo que el cliente pega en su
+  panel de Meta (Callback URL propia por cliente: `/webhooks/whatsapp/<ref>`
+  — la firma se valida con SU app secret). Requiere `PUBLIC_API_URL` en el
+  env de la API para armar la URL absoluta.
+- 409: número ya conectado a otro restaurante, o App ID en uso por otro.
+- Re-ejecutar actualiza credenciales (rotación de token = repetir el PUT).
+
+### 4.3 Estado
+
+```
+GET /provisioning/tenants/<gourmetifyTenantId>/whatsapp
+→ { connected: false, tenant } | mismo shape que 4.2 (sin secretos)
+```
+
+### 4.4 Checklist que la UI de Gourmetify le muestra al cliente
+
+1. Crear app en developers.facebook.com (tipo Business) y agregar el
+   producto WhatsApp.
+2. Anotar App ID y App Secret (Configuración → Básica).
+3. En WhatsApp → API Setup: anotar Phone Number ID y WABA ID.
+4. Crear un System User en Business Manager con la app y la WABA como
+   activos, y generar token SIN vencimiento con los dos permisos de
+   WhatsApp.
+5. Pegar todo en el formulario de Gourmetify (que llama al PUT 4.2).
+6. Con la respuesta: pegar Callback URL + verify token en la config del
+   webhook de su app en Meta y suscribirse al campo `messages`.
+
+## 5. Pendiente para después (anotado, no implementado)
 
 - **SSO**: hoy la cajera se loguea una vez en el inbox (cookie 30 días).
   El gancho `User.gourmetifyUserId` ya existe para que, cuando se quiera,

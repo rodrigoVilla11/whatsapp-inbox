@@ -40,6 +40,9 @@ model Tenant {
   name      String
   timezone  String       @default("America/Argentina/Buenos_Aires")
   status    TenantStatus @default(ACTIVE)
+  // Provisioning desde Gourmetify: id del cliente en el SaaS. La API de
+  // provisioning es idempotente por este campo.
+  gourmetifyTenantId String? @unique
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 

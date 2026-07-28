@@ -10,6 +10,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { MediaModule } from './media/media.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ProvisioningModule } from './provisioning/provisioning.module';
 import { QueueModule } from './queue/queue.module';
 import { RetentionModule } from './retention/retention.module';
 import { WebhookWorkerModule } from './webhook-worker/webhook-worker.module';
@@ -32,6 +33,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MessagingModule,
     MediaModule,
     InboxModule,
+    ProvisioningModule,
   ],
 })
 export class AppModule {}

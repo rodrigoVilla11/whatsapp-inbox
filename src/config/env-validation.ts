@@ -26,6 +26,16 @@ const RULES: EnvRule[] = [
   { name: 'PORT', required: 'optional', hint: 'default 3001' },
   { name: 'LOG_LEVEL', required: 'optional', hint: 'default info (prod) / debug (dev)' },
   { name: 'CORS_ORIGINS', required: 'optional', hint: 'solo dev cross-origin; en prod (mismo origen) no va' },
+  {
+    name: 'PROVISIONING_SECRET',
+    required: 'optional',
+    hint: 'habilita la API de provisioning para Gourmetify (sin esto: 503)',
+  },
+  {
+    name: 'PUBLIC_API_URL',
+    required: 'optional',
+    hint: 'base pública de la API para armar Callback URLs (ej: https://inbox.gourmetify.pro/inbox/api)',
+  },
   { name: 'ENCRYPTION_ACTIVE_KEY_VERSION', required: 'optional', hint: 'default 1' },
   // R2: grupo todo-o-nada; en producción es requerido (la media vive ahí).
   { name: 'R2_ENDPOINT', required: 'production', hint: 'endpoint S3 de Cloudflare R2' },
