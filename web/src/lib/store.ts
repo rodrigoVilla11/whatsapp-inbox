@@ -24,7 +24,7 @@ import {
   startSend,
 } from './composer';
 import { applyMessageChanges, sortMessages, upsertConversation, upsertMessage } from './merge';
-import { mergeOrder, type OrdersBundle } from './order-ui';
+import { isActiveOrderKind, mergeOrder, type OrdersBundle } from './order-ui';
 import { createDebounce, SEARCH_DEBOUNCE_MS } from './search';
 import type {
   AgentUser,
@@ -99,6 +99,7 @@ interface InboxState {
   retrySend(message: Message): Promise<void>;
 
   markRead(conversationId: string): Promise<void>;
+  markUnread(conversationId: string): Promise<void>;
   assign(conversationId: string, userId: string | null): Promise<void>;
   setConversationStatus(conversationId: string, status: 'OPEN' | 'CLOSED'): Promise<void>;
   dismissError(): void;
@@ -126,6 +127,8 @@ function optimisticMessage(
     mediaFilename: null,
     mediaSizeBytes: null,
     mediaStatus: null,
+    transcription: null,
+    isAutoReply: false,
     errorCode: null,
     errorTitle: null,
     errorDetail: null,
@@ -429,6 +432,16 @@ export const useInbox = create<InboxState>()((set, get) => {
       if (!contactId) return;
       set((s) => ({
         orders: { ...s.orders, [contactId]: mergeOrder(s.orders[contactId], order) },
+        // Un pedido activo ENCIENDE el resaltado de la fila en vivo (el
+        // apagado exacto llega con el próximo listado — un solo evento no
+        // alcanza para saber si quedan otros activos).
+        conversations: isActiveOrderKind(order.statusKind)
+          ? s.conversations.map((c) =>
+              c.contactId === contactId && !c.hasActiveOrder
+                ? { ...c, hasActiveOrder: true }
+                : c,
+            )
+          : s.conversations,
       }));
     },
 
@@ -537,6 +550,11 @@ export const useInbox = create<InboxState>()((set, get) => {
 
     async markRead(conversationId) {
       const { conversation } = await api.markRead(conversationId);
+      set((s) => ({ conversations: upsertConversation(s.conversations, conversation) }));
+    },
+
+    async markUnread(conversationId) {
+      const { conversation } = await api.markUnread(conversationId);
       set((s) => ({ conversations: upsertConversation(s.conversations, conversation) }));
     },
 

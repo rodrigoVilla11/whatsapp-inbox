@@ -23,6 +23,7 @@ const FAKE_ME: Me = {
   email: 'u1@nova.test',
   role: 'OWNER',
   mustChangePassword: false,
+  features: { transcription: false },
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

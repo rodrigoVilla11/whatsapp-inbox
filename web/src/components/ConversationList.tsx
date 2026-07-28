@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useDrafts } from '@/lib/drafts';
 import { formatTime, initialOf, relativeListTime } from '@/lib/format';
 import { type ListFilter, useInbox } from '@/lib/store';
 import { toast } from '@/lib/toast';
@@ -93,6 +94,7 @@ export function ConversationList({
   const nextCursor = useInbox((s) => s.nextCursor);
   const loadMore = useInbox((s) => s.loadMoreConversations);
   const setStatus = useInbox((s) => s.setConversationStatus);
+  const drafts = useDrafts((s) => s.drafts);
 
   // Reloj de la lista, seguro para hydration: null en SSR/primer paint
   // (se renderiza hora absoluta), reloj real + refresh 30s post-mount.
@@ -207,7 +209,11 @@ export function ConversationList({
                 onClick={() => onSelect(c.id)}
                 aria-current={selectedId === c.id ? 'true' : undefined}
                 className={`flex min-h-16 w-full items-center gap-3 border-b border-l-4 border-line/60 py-2 pl-2 pr-14 text-left hover:bg-ceramic ${railColor(c, now)} ${
-                  selectedId === c.id ? 'bg-nori-soft' : 'bg-rice'
+                  selectedId === c.id
+                    ? 'bg-nori-soft'
+                    : c.hasActiveOrder
+                      ? 'bg-nori-soft/40' // pedido en curso: la fila "respira" nori
+                      : 'bg-rice'
                 } ${cursorId === c.id ? 'outline-2 -outline-offset-2 outline-nori' : ''}`}
               >
                 <span
@@ -228,9 +234,15 @@ export function ConversationList({
                     )}
                   </span>
                   <span className="mt-0.5 flex items-center justify-between gap-2">
-                    <span className="truncate text-sm text-sumi/70">
-                      {c.lastMessagePreview ?? ''}
-                    </span>
+                    {drafts[c.id] ? (
+                      <span className="truncate text-sm italic text-nori">
+                        ✎ Borrador: {drafts[c.id]}
+                      </span>
+                    ) : (
+                      <span className="truncate text-sm text-sumi/70">
+                        {c.lastMessagePreview ?? ''}
+                      </span>
+                    )}
                     {c.unreadCount > 0 && (
                       <span
                         aria-label={`${c.unreadCount} sin leer`}
@@ -242,6 +254,11 @@ export function ConversationList({
                   </span>
                   <span className="mt-1 flex items-center gap-1.5">
                     <WindowChip conversation={c} now={now} />
+                    {c.hasActiveOrder && (
+                      <span className="rounded-full bg-nori-soft px-2 py-0.5 text-[11px] font-medium text-nori">
+                        🍱 Pedido
+                      </span>
+                    )}
                     {assignedName && (
                       <span className="max-w-24 truncate rounded-full border border-line px-2 py-0.5 text-[11px] font-medium text-sumi/70">
                         {assignedName}

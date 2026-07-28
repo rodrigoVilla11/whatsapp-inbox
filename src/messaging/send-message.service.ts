@@ -23,7 +23,7 @@ const PREVIEW_MAX_CHARS = 120;
  * únicamente acepta text/template; media entra por POST /conversations/:id/media.
  */
 export type SendRequest =
-  | { clientDedupKey: string; type: 'text'; body: string }
+  | { clientDedupKey: string; type: 'text'; body: string; isAutoReply?: boolean }
   | { clientDedupKey: string; type: 'template'; templateId: string; params: string[] }
   | {
       clientDedupKey: string;
@@ -143,6 +143,7 @@ export class SendMessageService {
           templateParams: prepared.templateParams ?? undefined,
           ...(prepared.mediaFields ?? {}),
           sentByUserId,
+          isAutoReply: request.type === 'text' && request.isAutoReply === true,
           timestamp: new Date(),
         },
       });

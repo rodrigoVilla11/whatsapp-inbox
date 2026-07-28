@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProvisioningModule } from './provisioning/provisioning.module';
 import { QueueModule } from './queue/queue.module';
 import { RetentionModule } from './retention/retention.module';
+import { TranscriptionModule } from './transcription/transcription.module';
 import { WebhookWorkerModule } from './webhook-worker/webhook-worker.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
@@ -36,6 +37,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     InboxModule,
     ProvisioningModule,
     GourmetifyModule,
+    TranscriptionModule,
   ],
 })
 export class AppModule {}

@@ -31,6 +31,8 @@ export function serializeMessage(m: Message): Record<string, unknown> {
     mediaFilename: m.mediaFilename,
     mediaSizeBytes: m.mediaSizeBytes,
     mediaStatus: m.mediaStatus,
+    transcription: m.transcription,
+    isAutoReply: m.isAutoReply,
     errorCode: m.errorCode,
     errorTitle: m.errorTitle,
     errorDetail: m.errorDetail,

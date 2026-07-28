@@ -43,6 +43,11 @@ model Tenant {
   // Provisioning desde Gourmetify: id del cliente en el SaaS. La API de
   // provisioning es idempotente por este campo.
   gourmetifyTenantId String? @unique
+
+  // Auto-respuesta fuera de horario: { enabled, message, schedule } —
+  // schedule por día de semana (0=Dom..6=Sáb) con hasta 2 rangos HH:MM.
+  // Se interpreta SIEMPRE en el timezone del tenant.
+  autoReply Json?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
@@ -176,6 +181,7 @@ model Conversation {
 
   lastInboundAt      DateTime? // ← ventana de 24h
   lastOutboundAt     DateTime?
+  lastAutoReplyAt    DateTime? // cooldown de la auto-respuesta (máx 1 cada 6h)
   lastMessageAt      DateTime? // orden del inbox
   lastMessagePreview String?
   unreadCount        Int       @default(0)
@@ -254,6 +260,11 @@ model Message {
   mediaSizeBytes Int?
   mediaSha256    String?
   mediaStatus    MediaStatus?
+  // Transcripción del audio (Whisper vía Groq, bajo demanda; se paga y
+  // transcribe UNA vez, después queda cacheada acá).
+  transcription  String?
+  // true = lo mandó el sistema (auto-respuesta), no una persona.
+  isAutoReply    Boolean      @default(false)
 
   // Pricing (objeto pricing de statuses[] — desde oct 2026 Meta cobra
   // mensajes de servicio; sin esto no hay backfill posible).
@@ -320,6 +331,7 @@ model MessageTemplate {
   @@index([tenantId, status])
 }
 
+// (isFavorite: hasta 4 por tenant aparecen como chips arriba del composer)
 model QuickReply {
   id        String   @id @default(cuid())
   tenantId  String
@@ -327,6 +339,7 @@ model QuickReply {
   title     String
   body      String // el link del menú vive ACÁ, no en el código
   isActive  Boolean  @default(true)
+  isFavorite Boolean @default(false) // chip arriba del composer (máx 4)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

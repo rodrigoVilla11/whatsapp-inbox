@@ -172,6 +172,43 @@ describe('POST read / assign / status', () => {
     expect(dto.unreadCount).toBe(0); // best-effort de verdad
   });
 
+  it('unread: pone MÍNIMO 1 sin pisar contadores reales, y emite el evento', async () => {
+    seedConversation('c_unread', { unreadCount: 0 });
+    const marked = (await service.markUnread(TENANT, 'c_unread')) as { unreadCount: number };
+    expect(marked.unreadCount).toBe(1);
+    expect(events.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'conversation.updated' }),
+    );
+
+    seedConversation('c_unread3', { unreadCount: 3 });
+    const kept = (await service.markUnread(TENANT, 'c_unread3')) as { unreadCount: number };
+    expect(kept.unreadCount).toBe(3); // los no-leídos reales no se pisan
+
+    await expect(service.markUnread('otro_tenant', 'c_unread')).rejects.toThrow(NotFoundException);
+  });
+
+  it('listado marca hasActiveOrder para contactos con pedido en curso', async () => {
+    seedConversation('c_con_pedido', { lastMessageAt: new Date(NOW - 1000) });
+    seedConversation('c_sin_pedido', { lastMessageAt: new Date(NOW - 2000) });
+    db.gourmetifyOrder.seed({
+      id: 'g1', tenantId: TENANT, gourmetifyOrderId: 'g1',
+      contactId: 'contact_c_con_pedido', customerPhone: '549341c_con_pedido',
+      statusLabel: 'Listo', statusKind: 'ready', orderCreatedAt: new Date(NOW),
+    });
+    db.gourmetifyOrder.seed({
+      id: 'g2', tenantId: TENANT, gourmetifyOrderId: 'g2',
+      contactId: 'contact_c_sin_pedido', customerPhone: '549341c_sin_pedido',
+      statusLabel: 'Entregado', statusKind: 'done', orderCreatedAt: new Date(NOW),
+    });
+
+    const result = await service.list(TENANT, null, {});
+    const byId = new Map(
+      (result.conversations as Array<{ id: string; hasActiveOrder: boolean }>).map((c) => [c.id, c]),
+    );
+    expect(byId.get('c_con_pedido')!.hasActiveOrder).toBe(true);
+    expect(byId.get('c_sin_pedido')!.hasActiveOrder).toBe(false); // done no cuenta
+  });
+
   it('assign valida que el usuario sea del tenant; null libera', async () => {
     db.user.seed({ id: 'user_ok', tenantId: TENANT, email: 'a@x.com', name: 'A' });
     db.user.seed({ id: 'user_otro_tenant', tenantId: 'ten_2', email: 'b@x.com', name: 'B' });
@@ -223,6 +260,25 @@ describe('QuickReplies CRUD', () => {
     expect(await quickReplies.list(TENANT)).toHaveLength(0);
     expect(await quickReplies.list(TENANT, true)).toHaveLength(1); // sigue existiendo
     expect(db.quickReply.rows[0].isActive).toBe(false);
+  });
+
+  it('favoritas (chips): tope de 4 por tenant, la 5ª rebota con mensaje claro', async () => {
+    for (let i = 1; i <= 5; i++) {
+      await quickReplies.create(TENANT, { shortcut: `/f${i}`, title: `F${i}`, body: 'x' });
+    }
+    const all = (await quickReplies.list(TENANT)) as Array<{ id: string }>;
+    for (let i = 0; i < 4; i++) {
+      await quickReplies.update(TENANT, all[i].id, { isFavorite: true });
+    }
+    await expect(quickReplies.update(TENANT, all[4].id, { isFavorite: true })).rejects.toThrow(
+      /4 respuestas como chip/,
+    );
+    // desmarcar una libera el cupo
+    await quickReplies.update(TENANT, all[0].id, { isFavorite: false });
+    const marked = (await quickReplies.update(TENANT, all[4].id, { isFavorite: true })) as {
+      isFavorite: boolean;
+    };
+    expect(marked.isFavorite).toBe(true);
   });
 
   it('update parcial revalida shortcut y respeta el scope del tenant', async () => {

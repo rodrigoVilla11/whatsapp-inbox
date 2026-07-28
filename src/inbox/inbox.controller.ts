@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -15,6 +16,7 @@ import {
 import type { Request } from 'express';
 import { MinRole, roleAtLeast, RolesGuard } from '../auth/roles';
 import { GourmetifyOrdersService } from '../gourmetify/orders.service';
+import { AutoReplyService } from '../messaging/auto-reply.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { getTenantContext } from '../tenant/tenant-context';
 import { ConversationListFilter, ConversationsService } from './conversations.service';
@@ -32,8 +34,25 @@ export class InboxController {
     private readonly conversations: ConversationsService,
     private readonly quickReplies: QuickRepliesService,
     private readonly orders: GourmetifyOrdersService,
+    private readonly autoReply: AutoReplyService,
     private readonly prisma: PrismaService,
   ) {}
+
+  // ── Auto-respuesta fuera de horario (config del tenant, ADMIN+) ────────
+
+  @Get('settings/auto-reply')
+  @MinRole('ADMIN')
+  async getAutoReply(@Req() req: Request): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return this.autoReply.getConfig(tenantId);
+  }
+
+  @Put('settings/auto-reply')
+  @MinRole('ADMIN')
+  async updateAutoReply(@Body() body: unknown, @Req() req: Request): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return this.autoReply.updateConfig(tenantId, body);
+  }
 
   /** Pedidos de Gourmetify del contacto: activos + últimos 3 cerrados. */
   @Get('conversations/:id/orders')
@@ -112,6 +131,13 @@ export class InboxController {
   async markRead(@Param('id') conversationId: string, @Req() req: Request): Promise<unknown> {
     const { tenantId } = getTenantContext(req);
     return { conversation: await this.conversations.markRead(tenantId, conversationId) };
+  }
+
+  /** "Vuelvo a esto después": deja la conversación como no leída. */
+  @Post('conversations/:id/unread')
+  async markUnread(@Param('id') conversationId: string, @Req() req: Request): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return { conversation: await this.conversations.markUnread(tenantId, conversationId) };
   }
 
   /** Matriz: AGENT solo se asigna/libera a sí mismo; ADMIN+ asigna a otros. */
@@ -198,7 +224,14 @@ export class InboxController {
   @MinRole('ADMIN')
   async updateQuickReply(
     @Param('id') id: string,
-    @Body() body: { shortcut?: string; title?: string; body?: string; isActive?: boolean },
+    @Body()
+    body: {
+      shortcut?: string;
+      title?: string;
+      body?: string;
+      isActive?: boolean;
+      isFavorite?: boolean;
+    },
     @Req() req: Request,
   ): Promise<unknown> {
     const { tenantId } = getTenantContext(req);

@@ -26,6 +26,8 @@ function msg(over: Partial<Message>): Message {
     mediaFilename: null,
     mediaSizeBytes: null,
     mediaStatus: null,
+    transcription: null,
+    isAutoReply: false,
     errorCode: null,
     errorTitle: null,
     errorDetail: null,

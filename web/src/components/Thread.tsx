@@ -54,6 +54,7 @@ export function Thread({
   const loadOlder = useInbox((s) => s.loadOlderMessages);
   const sendMedia = useInbox((s) => s.sendMedia);
   const setStatus = useInbox((s) => s.setConversationStatus);
+  const markUnread = useInbox((s) => s.markUnread);
   const timezone = useInbox((s) => s.timezone);
   // Pedido activo de Gourmetify (referencia estable vía selector compartido)
   const contactId = useInbox(
@@ -258,6 +259,23 @@ export function Thread({
           </button>
 
           <AssignMenu conversation={conversation} />
+
+          {/* "Vuelvo a esto después": marca no leída y sale a la lista */}
+          <button
+            onClick={() =>
+              statusAction.run(async () => {
+                await markUnread(conversationId);
+                toast('Marcada como no leída');
+                onBack();
+              })
+            }
+            disabled={statusAction.pending}
+            aria-label="Marcar como no leída y volver"
+            title="Marcar como no leída"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-line bg-rice text-base text-sumi/70 hover:bg-ceramic disabled:opacity-50"
+          >
+            ✉
+          </button>
 
           <button
             onClick={() =>

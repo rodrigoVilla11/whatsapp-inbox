@@ -6,7 +6,11 @@ export interface QuickReplyInput {
   title?: string;
   body?: string;
   isActive?: boolean;
+  isFavorite?: boolean;
 }
+
+/** Tope de chips arriba del composer: más que esto deja de ser "rápido". */
+export const MAX_FAVORITES = 4;
 
 function isUniqueViolation(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'P2002';
@@ -45,6 +49,17 @@ export class QuickRepliesService {
     if (input.shortcut !== undefined || input.title !== undefined || input.body !== undefined) {
       this.validate(input, { partial: true });
     }
+    // Tope de favoritas: la 5ª estrella rebota con mensaje claro.
+    if (input.isFavorite === true) {
+      const favorites = await this.prisma.db.quickReply.findMany({
+        where: { tenantId, isFavorite: true, isActive: true, id: { not: id } },
+      });
+      if (favorites.length >= MAX_FAVORITES) {
+        throw new BadRequestException(
+          `Ya hay ${MAX_FAVORITES} respuestas como chip — sacale la estrella a otra primero`,
+        );
+      }
+    }
     try {
       const { count } = await this.prisma.db.quickReply.updateMany({
         where: { id, tenantId },
@@ -53,6 +68,7 @@ export class QuickRepliesService {
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.body !== undefined ? { body: input.body } : {}),
           ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+          ...(input.isFavorite !== undefined ? { isFavorite: input.isFavorite } : {}),
         },
       });
       if (count === 0) throw new NotFoundException(`QuickReply ${id} no existe`);

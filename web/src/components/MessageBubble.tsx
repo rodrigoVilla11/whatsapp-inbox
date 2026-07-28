@@ -3,7 +3,52 @@
 import { api } from '@/lib/api';
 import { formatBytes, formatTime } from '@/lib/format';
 import { useInbox } from '@/lib/store';
+import { toast } from '@/lib/toast';
 import type { Message } from '@/lib/types';
+import { usePending } from '@/lib/use-pending';
+
+/**
+ * Transcripción bajo demanda del audio entrante: un tap y se lee en vez de
+ * escuchar. Una vez transcripto queda para siempre (cache server-side).
+ */
+function AudioTranscription({ message }: { message: Message }) {
+  const enabled = useInbox((s) => s.me?.features.transcription ?? false);
+  const { pending, run } = usePending();
+
+  if (message.transcription) {
+    return (
+      <p className="mt-1.5 border-l-2 border-nori/40 pl-2 text-sm italic text-sumi/80">
+        {message.transcription}
+      </p>
+    );
+  }
+  if (!enabled || message.direction !== 'INBOUND' || message.mediaStatus !== 'DOWNLOADED') {
+    return null;
+  }
+  return (
+    <button
+      onClick={() =>
+        run(async () => {
+          try {
+            const { message: updated } = await api.transcribe(message.id);
+            // aplicar ya (el message.updated del WS confirma para el resto)
+            useInbox.getState().onMessageUpdated({
+              id: message.id,
+              conversationId: message.conversationId,
+              changes: { transcription: updated.transcription },
+            });
+          } catch (error) {
+            toast(error instanceof Error ? error.message : 'No se pudo transcribir');
+          }
+        })
+      }
+      disabled={pending}
+      className="mt-1 min-h-10 rounded-lg px-2 text-xs font-medium text-nori hover:bg-nori-soft disabled:opacity-50"
+    >
+      {pending ? 'Transcribiendo…' : '✎ Transcribir'}
+    </button>
+  );
+}
 
 /** Tildes de estado: reloj PENDING, ✓ SENT, ✓✓ DELIVERED, ✓✓ azul READ, ⚠ FAILED. */
 function Ticks({ message }: { message: Message }) {
@@ -72,7 +117,12 @@ function Media({ message, outbound }: { message: Message; outbound: boolean }) {
     );
   }
   if (message.type === 'AUDIO') {
-    return <audio controls src={url} className="max-w-full" aria-label="Audio" />;
+    return (
+      <div>
+        <audio controls src={url} className="max-w-full" aria-label="Audio" />
+        <AudioTranscription message={message} />
+      </div>
+    );
   }
   if (message.type === 'VIDEO') {
     return <video controls src={url} className="max-h-64 max-w-full rounded-xl" />;
@@ -194,6 +244,7 @@ export function MessageBubble({
               outbound ? 'text-rice/70' : 'text-piedra'
             }`}
           >
+            {message.isAutoReply && <span className="font-sans">Automática ·</span>}
             {senderName && <span className="truncate font-sans">{senderName} ·</span>}
             <span>{formatTime(message.timestamp, timezone)}</span>
             <Ticks message={message} />

@@ -36,6 +36,12 @@ const RULES: EnvRule[] = [
     required: 'optional',
     hint: 'base pública de la API para armar Callback URLs (ej: https://inbox.gourmetify.pro/inbox/api)',
   },
+  {
+    name: 'GROQ_API_KEY',
+    required: 'optional',
+    hint: 'habilita la transcripción de audios (console.groq.com); sin esto el botón no aparece',
+  },
+  { name: 'TRANSCRIPTION_LANGUAGE', required: 'optional', hint: "default 'es'" },
   { name: 'ENCRYPTION_ACTIVE_KEY_VERSION', required: 'optional', hint: 'default 1' },
   // R2: grupo todo-o-nada; en producción es requerido (la media vive ahí).
   { name: 'R2_ENDPOINT', required: 'production', hint: 'endpoint S3 de Cloudflare R2' },

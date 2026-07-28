@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { Toasts } from '@/components/Toasts';
 import { api } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import type { QuickReply } from '@/lib/types';
 
 /** Ajustes de respuestas rápidas: lista + alta + edición + desactivar. */
@@ -109,6 +111,25 @@ export default function QuickRepliesSettings() {
       <ul className="divide-y divide-line/60 rounded-xl border border-line bg-rice">
         {items.map((q) => (
           <li key={q.id} className="flex items-center gap-3 p-3">
+            {/* ★ = chip arriba del composer (máx 4; el server valida el tope) */}
+            <button
+              onClick={() =>
+                api.quickReplies
+                  .update(q.id, { isFavorite: !q.isFavorite })
+                  .then(reload)
+                  .catch((err) =>
+                    toast(err instanceof Error ? err.message : 'No se pudo marcar'),
+                  )
+              }
+              aria-label={q.isFavorite ? `Quitar ${q.title} de los chips` : `Mostrar ${q.title} como chip`}
+              aria-pressed={q.isFavorite}
+              title={q.isFavorite ? 'Quitar chip del composer' : 'Mostrar como chip en el composer'}
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg ${
+                q.isFavorite ? 'text-nori' : 'text-piedra/50 hover:bg-ceramic hover:text-sumi'
+              }`}
+            >
+              {q.isFavorite ? '★' : '☆'}
+            </button>
             <span className="font-mono text-sm font-semibold text-nori">{q.shortcut}</span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{q.title}</span>
@@ -146,6 +167,13 @@ export default function QuickRepliesSettings() {
           <li className="p-6 text-center text-sm text-piedra">Sin respuestas rápidas</li>
         )}
       </ul>
+      <p className="mt-3 px-1 text-xs text-piedra">
+        ★ = aparece como chip arriba del composer (hasta 4). En el texto podés usar{' '}
+        <span className="font-mono">{'{{nombre}}'}</span> (se completa con el cliente) y variables
+        como <span className="font-mono">{'{{demora}}'}</span> (quedan seleccionadas para tipear el
+        valor).
+      </p>
+      <Toasts />
     </main>
   );
 }

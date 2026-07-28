@@ -24,6 +24,7 @@ import { UsersService } from '../src/auth/users.service';
 import { DOMAIN_EVENT_PUBLISHER } from '../src/events/domain-events';
 import { GourmetifyOrdersService } from '../src/gourmetify/orders.service';
 import { ConversationsService } from '../src/inbox/conversations.service';
+import { AutoReplyService } from '../src/messaging/auto-reply.service';
 import { InboxController } from '../src/inbox/inbox.controller';
 import { QuickRepliesService } from '../src/inbox/quick-replies.service';
 import { MediaAccessService } from '../src/media/media-access.service';
@@ -100,6 +101,11 @@ beforeAll(async () => {
       ConversationsService,
       QuickRepliesService,
       GourmetifyOrdersService, // InboxController lo inyecta (pedidos en el chat)
+      {
+        // stub: los endpoints de auto-respuesta no se ejercitan acá
+        provide: AutoReplyService,
+        useValue: { getConfig: vi.fn(), updateConfig: vi.fn(), maybeReply: vi.fn() },
+      },
       { provide: PrismaService, useValue: prisma },
       {
         // rate limiter sobre el Redis del compose (integración real)

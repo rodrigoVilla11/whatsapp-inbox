@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { useDrafts } from '@/lib/drafts';
 import { initNotifications } from '@/lib/notify';
 import { usePrefs } from '@/lib/prefs';
 import { connectInboxSocket } from '@/lib/socket';
@@ -53,9 +54,10 @@ export function InboxShell() {
     void select(selectedId);
   }, [selectedId, select]);
 
-  // Preferencias del dispositivo + notificaciones (audio tras 1ª interacción)
+  // Preferencias + borradores del dispositivo + notificaciones
   useEffect(() => {
     usePrefs.getState().hydrate();
+    useDrafts.getState().hydrate();
     return initNotifications((id) => router.push(`/c/${id}`));
   }, [router]);
 

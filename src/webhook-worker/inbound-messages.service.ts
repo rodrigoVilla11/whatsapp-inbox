@@ -1,9 +1,10 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma, WhatsappAccount } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { serializeConversation, serializeMessage } from '../common/serializers';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../events/domain-events';
+import { AutoReplyService } from '../messaging/auto-reply.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   MEDIA_DOWNLOAD_JOB,
@@ -43,6 +44,8 @@ export class InboundMessagesService {
     private readonly mediaQueue: Queue<MediaDownloadJob>,
     @Inject(DOMAIN_EVENT_PUBLISHER)
     private readonly events: DomainEventPublisher,
+    // Opcional: los tests unitarios del worker no la wirean y no pasa nada.
+    @Optional() private readonly autoReply?: AutoReplyService,
   ) {}
 
   async processMessage(
@@ -212,6 +215,16 @@ export class InboundMessagesService {
         type: 'conversation.updated',
         payload: { conversation: serializeConversation(freshConversation) },
       });
+    }
+
+    // Auto-respuesta fuera de horario: best-effort, jamás rompe el webhook
+    // (patrón del mark-read). Reacciones no la disparan: no son "escribió".
+    if (!mapped.isReaction) {
+      void this.autoReply
+        ?.maybeReply(tenantId, conversationId)
+        .catch((error) =>
+          this.logger.warn(`Auto-respuesta falló (se sigue): ${String(error)}`),
+        );
     }
   }
 }

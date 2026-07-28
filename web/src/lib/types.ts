@@ -20,6 +20,10 @@ export interface Message {
   mediaFilename: string | null;
   mediaSizeBytes: number | null;
   mediaStatus: MediaStatus;
+  /** Transcripción del audio (bajo demanda; null = todavía no pedida). */
+  transcription: string | null;
+  /** true = lo mandó el sistema (auto-respuesta fuera de horario). */
+  isAutoReply: boolean;
   errorCode: number | null;
   errorTitle: string | null;
   errorDetail: string | null;
@@ -58,6 +62,8 @@ export interface Conversation {
   isWindowOpen: boolean;
   windowExpiresAt: string | null;
   contact?: Contact | null;
+  /** Solo en el listado REST (los eventos WS no lo traen; el merge lo preserva). */
+  hasActiveOrder?: boolean;
 }
 
 export interface Template {
@@ -75,6 +81,8 @@ export interface QuickReply {
   title: string;
   body: string;
   isActive: boolean;
+  /** Chip arriba del composer (máx 4 por tenant). */
+  isFavorite: boolean;
 }
 
 /** DTO de GET /users — solo lo que el selector de asignación necesita. */
@@ -113,6 +121,8 @@ export interface Me {
   email: string;
   role: 'OWNER' | 'ADMIN' | 'AGENT';
   mustChangePassword: boolean;
+  /** Capacidades habilitadas en el server (la UI esconde lo que no hay). */
+  features: { transcription: boolean };
 }
 
 /** Envelope de envío del backend: { message, error } SIEMPRE. */
@@ -148,6 +158,19 @@ export interface GourmetifyOrder {
 export interface OrderUpdatedEvent {
   order: GourmetifyOrder;
   contactId: string | null;
+}
+
+/** Config de auto-respuesta fuera de horario (Ajustes, ADMIN+). */
+export interface AutoReplyRange {
+  from: string; // "HH:MM"
+  to: string;
+}
+
+export interface AutoReplyConfig {
+  enabled: boolean;
+  message: string;
+  /** '0' (Dom) … '6' (Sáb) → hasta 2 rangos; [] = cerrado. */
+  schedule: Record<string, AutoReplyRange[]>;
 }
 
 // Eventos WS (contrato fase 6)

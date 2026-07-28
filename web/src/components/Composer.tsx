@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDrafts } from '@/lib/drafts';
 import { validateFile } from '@/lib/media-constants';
 import { usePrefs } from '@/lib/prefs';
+import { resolveQuickReply } from '@/lib/quick-reply';
 import { useInbox } from '@/lib/store';
 import type { Conversation, QuickReply, Template } from '@/lib/types';
 import { windowView } from '@/lib/window-ui';
@@ -93,6 +95,23 @@ export function Composer({ conversation }: { conversation: Conversation }) {
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
   }, [text]);
 
+  // ── Borradores: cargar al cambiar de conversación, persistir al tipear,
+  // limpiar al enviar (setText('') → se borra solo). ──────────────────────
+  const setDraft = useDrafts((s) => s.setDraft);
+  useEffect(() => {
+    setText(useDrafts.getState().drafts[conversation.id] ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation.id]);
+  // Guarda del commit de cambio de conversación: en ese render `text` es
+  // todavía el de la conversación ANTERIOR — no hay que guardarlo acá.
+  const draftGuard = useRef({ id: conversation.id, text });
+  useEffect(() => {
+    const previous = draftGuard.current;
+    draftGuard.current = { id: conversation.id, text };
+    if (previous.id !== conversation.id) return;
+    setDraft(conversation.id, text);
+  }, [text, conversation.id, setDraft]);
+
   // Deep-link de Gourmetify: ?draft=<texto> precarga el composer UNA vez y
   // limpia el param (F5 no lo re-inserta). Si la ventana está cerrada, el
   // texto queda visible en el textarea deshabilitado — plantillas manda.
@@ -113,6 +132,30 @@ export function Composer({ conversation }: { conversation: Conversation }) {
     if (!text.startsWith('/') || text.includes(' ')) return [];
     return quickReplies.filter((q) => q.shortcut.startsWith(text)).slice(0, 6);
   }, [text, quickReplies]);
+
+  // Chips: las favoritas (máx 4), un tap y el texto queda listo en el input.
+  const favorites: QuickReply[] = useMemo(
+    () => quickReplies.filter((q) => q.isFavorite && q.isActive).slice(0, 4),
+    [quickReplies],
+  );
+
+  /**
+   * Inserta una respuesta rápida resolviendo {{nombre}} con el contacto;
+   * si quedan variables ({{demora}}…), la primera queda SELECCIONADA en el
+   * textarea — tipear el valor la reemplaza directo.
+   */
+  function insertQuickReply(q: QuickReply): void {
+    const contactName = conversation.contact?.profileName ?? null;
+    const { text: resolved, firstVar } = resolveQuickReply(q.body, contactName);
+    setText(resolved);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      if (firstVar) el.setSelectionRange(firstVar.start, firstVar.end);
+      else el.setSelectionRange(resolved.length, resolved.length);
+    });
+  }
 
   async function submitText() {
     const body = text.trim();
@@ -191,7 +234,7 @@ export function Composer({ conversation }: { conversation: Conversation }) {
           {quickMatches.map((q) => (
             <li key={q.id}>
               <button
-                onClick={() => setText(q.body)}
+                onClick={() => insertQuickReply(q)}
                 className="min-h-12 w-full rounded-xl px-3 py-2 text-left hover:bg-ceramic"
               >
                 <span className="mr-2 font-mono text-sm font-semibold text-nori">
@@ -208,6 +251,22 @@ export function Composer({ conversation }: { conversation: Conversation }) {
         <p role="alert" className="px-3 pt-2 text-xs font-medium text-gari-ink">
           {fileError}
         </p>
+      )}
+
+      {/* Chips de favoritas: un tap → texto listo en el input (jamás envía solo) */}
+      {!closed && favorites.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto px-3 pt-2" aria-label="Respuestas frecuentes">
+          {favorites.map((q) => (
+            <button
+              key={q.id}
+              onClick={() => insertQuickReply(q)}
+              title={q.body}
+              className="min-h-11 shrink-0 rounded-full bg-nori-soft px-3.5 text-[13px] font-medium text-nori hover:bg-nori-mist"
+            >
+              {q.title}
+            </button>
+          ))}
+        </div>
       )}
 
       {text.length >= COUNTER_FROM && (
@@ -280,7 +339,7 @@ export function Composer({ conversation }: { conversation: Conversation }) {
             if (e.key !== 'Enter') return;
             if (quickMatches.length > 0) {
               e.preventDefault();
-              setText(quickMatches[0].body); // Enter inserta el body
+              insertQuickReply(quickMatches[0]); // Enter inserta (con variables)
               return;
             }
             // Preferencia de dispositivo: Enter envía (default) o

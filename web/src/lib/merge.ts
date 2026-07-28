@@ -76,6 +76,9 @@ export function upsertConversation(list: Conversation[], incoming: Conversation)
   const merged: Conversation = {
     ...incoming,
     contact: incoming.contact ?? existing?.contact ?? null,
+    // hasActiveOrder solo viaja en el listado REST: los eventos WS no lo
+    // traen y no deben apagarlo.
+    hasActiveOrder: incoming.hasActiveOrder ?? existing?.hasActiveOrder,
   };
   const rest = list.filter((c) => c.id !== incoming.id);
   return sortConversations([...rest, merged]);

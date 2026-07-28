@@ -7,6 +7,7 @@ import { playIncomingSound, initNotifications } from '@/lib/notify';
 import { type InboxPrefs, usePrefs } from '@/lib/prefs';
 import { toast } from '@/lib/toast';
 import type { Me } from '@/lib/types';
+import { AutoReplySettings } from '@/components/AutoReplySettings';
 import { Toasts } from '@/components/Toasts';
 
 function Toggle({
@@ -139,6 +140,8 @@ export default function InboxSettings() {
           }
         />
       </section>
+
+      {(me?.role === 'ADMIN' || me?.role === 'OWNER') && <AutoReplySettings />}
 
       <section className="rounded-2xl border border-line bg-rice p-2">
         <h2 className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-piedra">

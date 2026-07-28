@@ -14,6 +14,7 @@ import type { User } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { getTenantContext } from '../tenant/tenant-context';
+import { transcriptionEnabled } from '../transcription/transcription.service';
 import { clearSessionCookie, parseCookies, SESSION_COOKIE, setSessionCookie } from './cookies';
 import { LoginRateLimiter } from './login-rate-limit';
 import { hashPassword, passwordPolicyError, verifyPassword } from './passwords';
@@ -121,6 +122,8 @@ export class AuthController {
         name: tenant.name,
         timezone: tenant.timezone,
       },
+      // Capacidades según el entorno del server — la UI esconde lo que no hay.
+      features: { transcription: transcriptionEnabled() },
     };
   }
 

@@ -1,6 +1,7 @@
 import type {
   AgentUser,
   AuthUser,
+  AutoReplyConfig,
   Contact,
   Conversation,
   GourmetifyOrder,
@@ -41,6 +42,7 @@ export const API_ROUTES = {
   conversationMessages: (id: string) => `/conversations/${id}/messages`,
   conversationOrders: (id: string) => `/conversations/${id}/orders`,
   conversationRead: (id: string) => `/conversations/${id}/read`,
+  conversationUnread: (id: string) => `/conversations/${id}/unread`,
   conversationAssign: (id: string) => `/conversations/${id}/assign`,
   conversationStatus: (id: string) => `/conversations/${id}/status`,
   conversationMedia: (id: string) => `/conversations/${id}/media`,
@@ -49,6 +51,8 @@ export const API_ROUTES = {
   quickReplies: '/quick-replies',
   quickReply: (id: string) => `/quick-replies/${id}`,
   messageMedia: (id: string) => `/messages/${id}/media`,
+  messageTranscribe: (id: string) => `/messages/${id}/transcribe`,
+  autoReplySettings: '/settings/auto-reply',
 } as const;
 
 /**
@@ -140,6 +144,7 @@ export function conversationQueryParams(options: ConversationListOptions): URLSe
 interface AuthMeResponse {
   user: AuthUser;
   tenant: { id: string; slug: string; name: string; timezone: string };
+  features?: { transcription?: boolean };
 }
 
 function toMe(response: AuthMeResponse): Me {
@@ -152,6 +157,7 @@ function toMe(response: AuthMeResponse): Me {
     email: response.user.email,
     role: response.user.role,
     mustChangePassword: response.user.mustChangePassword,
+    features: { transcription: response.features?.transcription ?? false },
   };
 }
 
@@ -197,6 +203,21 @@ export const api = {
       body: JSON.stringify({ notes }),
     }),
 
+  autoReply: {
+    get: () => json<AutoReplyConfig>(API_ROUTES.autoReplySettings),
+    update: (config: AutoReplyConfig) =>
+      json<AutoReplyConfig>(API_ROUTES.autoReplySettings, {
+        method: 'PUT',
+        body: JSON.stringify(config),
+      }),
+  },
+
+  /** Transcripción bajo demanda; el resultado también llega por message.updated. */
+  transcribe: (messageId: string) =>
+    json<{ message: Message; cached: boolean }>(API_ROUTES.messageTranscribe(messageId), {
+      method: 'POST',
+    }),
+
   listOrders: (conversationId: string) =>
     json<{ active: GourmetifyOrder[]; recent: GourmetifyOrder[] }>(
       API_ROUTES.conversationOrders(conversationId),
@@ -211,6 +232,11 @@ export const api = {
 
   markRead: (conversationId: string) =>
     json<{ conversation: Conversation }>(API_ROUTES.conversationRead(conversationId), {
+      method: 'POST',
+    }),
+
+  markUnread: (conversationId: string) =>
+    json<{ conversation: Conversation }>(API_ROUTES.conversationUnread(conversationId), {
       method: 'POST',
     }),
 

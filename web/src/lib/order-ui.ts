@@ -42,6 +42,10 @@ export interface OrdersBundle {
 const ACTIVE_KINDS: ReadonlySet<string> = new Set(['pending', 'in_progress', 'ready']);
 const RECENT_LIMIT = 3;
 
+export function isActiveOrderKind(kind: string): boolean {
+  return ACTIVE_KINDS.has(kind);
+}
+
 function byCreatedDesc(a: GourmetifyOrder, b: GourmetifyOrder): number {
   return Date.parse(b.orderCreatedAt) - Date.parse(a.orderCreatedAt);
 }

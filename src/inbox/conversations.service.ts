@@ -90,12 +90,26 @@ export class ConversationsService {
     })) as Contact[];
     const contactById = new Map(contacts.map((c) => [c.id, c]));
 
+    // Pedido activo de Gourmetify → la fila se resalta en la lista.
+    const activeOrders = await db.gourmetifyOrder.findMany({
+      where: {
+        tenantId,
+        contactId: { in: contactIds },
+        statusKind: { in: ['pending', 'in_progress', 'ready'] },
+      },
+    });
+    const withActiveOrder = new Set(activeOrders.map((o) => o.contactId as string));
+
     const tenant = await db.tenant.findUnique({ where: { id: tenantId } });
 
     return {
-      conversations: page.map((c) =>
-        serializeConversation(c, contactById.get(c.contactId) ?? null),
-      ),
+      conversations: page.map((c) => ({
+        ...(serializeConversation(c, contactById.get(c.contactId) ?? null) as Record<
+          string,
+          unknown
+        >),
+        hasActiveOrder: withActiveOrder.has(c.contactId),
+      })),
       nextCursor,
       timezone: tenant?.timezone ?? 'UTC',
     };
@@ -151,6 +165,20 @@ export class ConversationsService {
       this.logger.warn(`mark-read en Meta falló (cortesía, se sigue): ${String(error)}`);
     });
 
+    return this.emitAndReturn(tenantId, conversationId);
+  }
+
+  /**
+   * "Marcar como no leído": el gesto de "vuelvo a esto después". Pone el
+   * contador en MÍNIMO 1 (si ya hay no-leídos reales, no los pisa) y emite
+   * conversation.updated — badge de fila y de pestaña lo toman solos.
+   */
+  async markUnread(tenantId: string, conversationId: string): Promise<unknown> {
+    await this.mustGet(tenantId, conversationId);
+    await this.prisma.db.conversation.updateMany({
+      where: { id: conversationId, tenantId, unreadCount: 0 },
+      data: { unreadCount: 1 },
+    });
     return this.emitAndReturn(tenantId, conversationId);
   }
 

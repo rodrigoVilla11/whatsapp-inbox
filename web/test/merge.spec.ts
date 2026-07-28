@@ -22,6 +22,8 @@ const msg = (over: Partial<Message>): Message => ({
   mediaFilename: null,
   mediaSizeBytes: null,
   mediaStatus: null,
+    transcription: null,
+    isAutoReply: false,
   errorCode: null,
   errorTitle: null,
   errorDetail: null,
@@ -130,5 +132,11 @@ describe('upsertConversation (conversation.updated)', () => {
     const result = upsertConversation([], conv({ id: 'c_nueva', contact: undefined }));
     expect(result).toHaveLength(1);
     expect(result[0].contact).toBeNull();
+  });
+
+  it('preserva hasActiveOrder (los eventos WS no traen el flag del listado)', () => {
+    const list = [conv({ id: 'c1', hasActiveOrder: true })];
+    const result = upsertConversation(list, conv({ id: 'c1', unreadCount: 2, contact: undefined }));
+    expect(result[0].hasActiveOrder).toBe(true);
   });
 });

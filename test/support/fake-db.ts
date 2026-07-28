@@ -272,7 +272,12 @@ export function createFakeDb(): FakeDb {
   const db: FakeDb = {
     tenant: new FakeModel(
       'ten',
-      { status: 'ACTIVE', timezone: 'America/Argentina/Buenos_Aires', gourmetifyTenantId: null },
+      {
+        status: 'ACTIVE',
+        timezone: 'America/Argentina/Buenos_Aires',
+        gourmetifyTenantId: null,
+        autoReply: null,
+      },
       [['slug'], ['gourmetifyTenantId']],
     ),
     metaApp: new FakeModel('app', { graphVersion: null }, [['ref'], ['appId']]),
@@ -308,6 +313,7 @@ export function createFakeDb(): FakeDb {
         assignedUserId: null,
         lastInboundAt: null,
         lastOutboundAt: null,
+        lastAutoReplyAt: null,
         lastMessageAt: null,
         lastMessagePreview: null,
         unreadCount: 0,
@@ -329,6 +335,8 @@ export function createFakeDb(): FakeDb {
         mediaFilename: null,
         mediaSha256: null,
         mediaStatus: null,
+        transcription: null,
+        isAutoReply: false,
         billable: null,
         pricingModel: null,
         pricingCategory: null,
@@ -349,7 +357,9 @@ export function createFakeDb(): FakeDb {
       { status: 'PENDING', components: null, variableCount: 0, metaTemplateId: null, syncedAt: null },
       [['tenantId', 'whatsappAccountId', 'name', 'language']],
     ),
-    quickReply: new FakeModel('qr', { isActive: true }, [['tenantId', 'shortcut']]),
+    quickReply: new FakeModel('qr', { isActive: true, isFavorite: false }, [
+      ['tenantId', 'shortcut'],
+    ]),
     gourmetifyOrder: new FakeModel(
       'gord',
       {
