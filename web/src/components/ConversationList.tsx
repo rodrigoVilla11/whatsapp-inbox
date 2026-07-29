@@ -78,11 +78,16 @@ export function ConversationList({
   selectedId,
   cursorId,
   onSelect,
+  expanded = false,
+  onToggleExpanded,
 }: {
   selectedId: string | null;
   /** Fila marcada por teclado (↑/↓ del dueño en desktop). */
   cursorId?: string | null;
   onSelect: (id: string) => void;
+  /** Panorámica: la lista toma todo el ancho y las filas van en grilla. */
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }) {
   const conversations = useInbox((s) => s.conversations);
   const filter = useInbox((s) => s.filter);
@@ -136,14 +141,30 @@ export function ConversationList({
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-line p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <h1 className="text-lg font-semibold">Inbox</h1>
-          <Link
-            href="/settings"
-            className="min-h-10 rounded-xl px-3 py-2 text-sm text-sumi/70 hover:bg-ceramic"
-          >
-            Ajustes
-          </Link>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h1 className="text-lg font-semibold">Gourmetify WhatsApp</h1>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* Panorámica: solo desktop — en mobile la lista YA es full width */}
+            {onToggleExpanded && (
+              <button
+                onClick={onToggleExpanded}
+                aria-pressed={expanded}
+                title={expanded ? 'Volver al chat (Esc)' : 'Ver todos los chats (E)'}
+                className={`hidden min-h-10 items-center gap-1.5 rounded-xl px-3 py-2 text-sm md:inline-flex ${
+                  expanded ? 'bg-nori text-rice' : 'text-sumi/70 hover:bg-ceramic'
+                }`}
+              >
+                <span aria-hidden>{expanded ? '⤡' : '⤢'}</span>
+                {expanded ? 'Volver' : 'Ver todos'}
+              </button>
+            )}
+            <Link
+              href="/settings"
+              className="min-h-10 rounded-xl px-3 py-2 text-sm text-sumi/70 hover:bg-ceramic"
+            >
+              Ajustes
+            </Link>
+          </div>
         </div>
 
         <label className="sr-only" htmlFor="conversation-search">
@@ -195,9 +216,16 @@ export function ConversationList({
         )}
       </header>
 
-      <ul className="min-h-0 flex-1 overflow-y-auto" aria-label="Conversaciones">
+      <ul
+        className={`min-h-0 flex-1 overflow-y-auto ${
+          expanded
+            ? 'grid content-start gap-2 p-2 grid-cols-[repeat(auto-fill,minmax(20rem,1fr))]'
+            : ''
+        }`}
+        aria-label="Conversaciones"
+      >
         {loading && conversations.length === 0 && (
-          <li>
+          <li className={expanded ? 'col-span-full' : ''}>
             <ListSkeleton />
           </li>
         )}
@@ -222,7 +250,9 @@ export function ConversationList({
               <button
                 onClick={() => onSelect(c.id)}
                 aria-current={selectedId === c.id ? 'true' : undefined}
-                className={`flex min-h-16 w-full items-center gap-3 border-b border-l-4 border-line/60 py-2 pl-2 pr-14 text-left hover:bg-ceramic ${railColor(c, now)} ${
+                className={`flex min-h-16 w-full items-center gap-3 border-l-4 border-line/60 py-2 pl-2 pr-14 text-left hover:bg-ceramic ${
+                  expanded ? 'rounded-xl border' : 'border-b'
+                } ${railColor(c, now)} ${
                   selectedId === c.id
                     ? 'bg-nori-soft'
                     : c.hasActiveOrder
@@ -318,7 +348,7 @@ export function ConversationList({
         })}
 
         {!loading && conversations.length === 0 && (
-          <li className="px-6 py-10 text-center">
+          <li className={`px-6 py-10 text-center ${expanded ? 'col-span-full' : ''}`}>
             {searching ? (
               <>
                 <p className="text-sm font-medium text-sumi/80">
@@ -350,7 +380,7 @@ export function ConversationList({
         )}
 
         {nextCursor && (
-          <li className="p-3">
+          <li className={`p-3 ${expanded ? 'col-span-full' : ''}`}>
             <button
               onClick={() => {
                 if (loadingMore) return;

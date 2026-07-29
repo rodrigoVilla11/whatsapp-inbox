@@ -5,7 +5,8 @@
 const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: '↑ / ↓', action: 'Navegar la lista' },
   { keys: 'Enter', action: 'Abrir la conversación marcada' },
-  { keys: 'Esc', action: 'Volver a la lista' },
+  { keys: 'Esc', action: 'Salir de la panorámica / volver a la lista' },
+  { keys: 'E', action: 'Ver todos los chats (panorámica)' },
   { keys: '/', action: 'Respuestas rápidas (en el mensaje)' },
   { keys: '?', action: 'Mostrar u ocultar esta ayuda' },
 ];

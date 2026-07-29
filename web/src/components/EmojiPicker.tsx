@@ -41,11 +41,13 @@ export function EmojiPicker({
   }, [onClose]);
 
   return (
+    // w-max: sin ancho propio, el absoluto lo topea el wrapper del botón (48px)
+    // y las 6 columnas se apilan en una. max-h: entran las 7 filas sin scroll.
     <div
       ref={ref}
       role="listbox"
       aria-label="Elegir emoji"
-      className="absolute bottom-full left-0 z-30 mb-2 grid max-h-64 grid-cols-6 gap-0.5 overflow-y-auto rounded-2xl border border-line bg-rice p-2 shadow-lg"
+      className="absolute bottom-full left-0 z-30 mb-2 grid max-h-88 w-max max-w-[calc(100vw-1.5rem)] grid-cols-6 gap-0.5 overflow-y-auto rounded-2xl border border-line bg-rice p-2 shadow-lg"
     >
       {EMOJIS.map((emoji) => (
         <button

@@ -108,6 +108,11 @@ describe('POST /gourmetify/orders (ingesta)', () => {
     );
   });
 
+  it('acepta order.number numérico (dailyOrderNumber) y lo guarda como texto', async () => {
+    const res = await post(baseOrder({ number: 123 })).expect(200);
+    expect(res.body.order.number).toBe('123');
+  });
+
   it('upsert idempotente: reintentos y cambios de estado NO duplican', async () => {
     await post(baseOrder()).expect(200);
     await post(baseOrder({ statusLabel: 'Listo', statusKind: 'ready' })).expect(200);

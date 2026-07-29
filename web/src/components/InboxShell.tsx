@@ -36,6 +36,15 @@ export function InboxShell() {
   // Cursor de teclado sobre la lista (↑/↓ marca, Enter abre) + ayuda "?"
   const [cursorId, setCursorId] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  // Panorámica: la lista toma toda la pantalla para barrer muchos chats de un
+  // vistazo. Es momentánea a propósito (no es preferencia de dispositivo):
+  // elegir una conversación devuelve el layout de 3 columnas.
+  const [listExpanded, setListExpanded] = useState(false);
+
+  function openConversation(id: string): void {
+    setListExpanded(false);
+    router.push(`/c/${id}`);
+  }
 
   useEffect(() => {
     // Un 401 acá redirige a /login (manejo global en api.ts).
@@ -80,6 +89,11 @@ export function InboxShell() {
           setShowHelp(false);
           return;
         }
+        // Esc sale primero de la panorámica; recién después vuelve a la lista.
+        if (listExpanded) {
+          setListExpanded(false);
+          return;
+        }
         if (!typing && selectedId) router.push('/');
         return;
       }
@@ -88,6 +102,11 @@ export function InboxShell() {
       if (e.key === '?') {
         e.preventDefault();
         setShowHelp((v) => !v);
+        return;
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault();
+        setListExpanded((v) => !v);
         return;
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -102,12 +121,13 @@ export function InboxShell() {
         return;
       }
       if (e.key === 'Enter' && cursorId) {
+        setListExpanded(false);
         router.push(`/c/${cursorId}`);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [conversations, cursorId, selectedId, showHelp, router]);
+  }, [conversations, cursorId, selectedId, showHelp, listExpanded, router]);
 
   // Password provisoria: no hay inbox hasta elegir la definitiva.
   if (mustChangePassword) return <ChangePasswordGate />;
@@ -131,21 +151,26 @@ export function InboxShell() {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        {/* Lista: oculta en mobile cuando hay hilo abierto */}
+        {/* Lista: oculta en mobile cuando hay hilo abierto; en panorámica
+            ocupa todo el ancho y el hilo/panel se esconden */}
         <aside
-          className={`w-full shrink-0 border-r border-line bg-rice md:block md:w-80 lg:w-96 ${
-            selectedId ? 'hidden' : 'block'
+          className={`w-full shrink-0 border-r border-line bg-rice md:block ${
+            listExpanded ? 'block' : `md:w-80 lg:w-96 ${selectedId ? 'hidden' : 'block'}`
           }`}
         >
           <ConversationList
             selectedId={selectedId}
             cursorId={cursorId}
-            onSelect={(id) => router.push(`/c/${id}`)}
+            onSelect={openConversation}
+            expanded={listExpanded}
+            onToggleExpanded={() => setListExpanded((v) => !v)}
           />
         </aside>
 
         {/* Hilo */}
-        <main className={`min-w-0 flex-1 ${selectedId ? 'block' : 'hidden md:block'}`}>
+        <main
+          className={`min-w-0 flex-1 ${listExpanded ? 'hidden' : selectedId ? 'block' : 'hidden md:block'}`}
+        >
           {selectedId ? (
             <Thread conversationId={selectedId} onBack={() => router.push('/')} />
           ) : (
@@ -159,7 +184,7 @@ export function InboxShell() {
         </main>
 
         {/* Panel de contacto: solo desktop ancho */}
-        {selectedId && (
+        {selectedId && !listExpanded && (
           <aside className="hidden w-72 shrink-0 border-l border-line bg-rice xl:block">
             <ContactPanel conversationId={selectedId} />
           </aside>

@@ -68,6 +68,16 @@ function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+/**
+ * El número de pedido llega como número desde Gourmetify (`dailyOrderNumber`)
+ * y como string en integraciones que lo formatean. Se guarda siempre como
+ * texto: para el inbox es display, no se opera con él.
+ */
+function optionalNumberLabel(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return optionalString(value);
+}
+
 @Injectable()
 export class GourmetifyOrdersService {
   private readonly logger = new Logger(GourmetifyOrdersService.name);
@@ -118,7 +128,7 @@ export class GourmetifyOrdersService {
     const data = {
       contactId: contact?.id ?? null,
       customerPhone,
-      number: optionalString(input.order?.number),
+      number: optionalNumberLabel(input.order?.number),
       statusLabel,
       statusKind,
       summary: optionalString(input.order?.summary),

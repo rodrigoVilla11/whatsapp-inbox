@@ -73,6 +73,45 @@ export function isUnauthorized(error: unknown): error is UnauthorizedError {
   return error instanceof UnauthorizedError;
 }
 
+/**
+ * Normaliza la respuesta de un envío al envelope { message, error }.
+ *
+ * Hace falta porque un throw de Nest (400 de validación, 413 de multer, 500
+ * de un fallo de Graph/R2) contesta { statusCode, message: string, error:
+ * string } — la MISMA forma que el envelope pero con tipos distintos. Sin
+ * validar, ese `message` STRING entraba al store como si fuera un Message y
+ * el render moría en formatTime (RangeError: Invalid time value) llevándose
+ * la página entera. Acá: sólo un objeto es Message, y un cuerpo de excepción
+ * se traduce a un error de dominio mostrable.
+ */
+export function parseSendEnvelope(raw: unknown, httpStatus: number): SendResult {
+  const body = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+
+  // Sólo un objeto PLANO es un Message: un string es el texto de una
+  // excepción y un array es el `message` del ValidationPipe de Nest.
+  const isPlainObject = (value: unknown): boolean =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+
+  const message = isPlainObject(body.message) ? (body.message as Message) : null;
+  const error = isPlainObject(body.error) ? (body.error as SendResult['error']) : null;
+
+  if (error || httpStatus < 400) return { message, error, httpStatus };
+
+  // Cuerpo de excepción: el `message` string es el texto accionable del server.
+  const detail = Array.isArray(body.message) ? body.message[0] : body.message;
+  return {
+    message,
+    error: {
+      code: 'SERVER_ERROR',
+      message:
+        typeof detail === 'string' && detail.trim()
+          ? detail
+          : `El servidor respondió ${httpStatus}. Reintentá.`,
+    },
+    httpStatus,
+  };
+}
+
 /** Objeto (no función suelta) para poder espiarlo/anularlo en tests. */
 export const authRedirect = {
   trigger(): void {
@@ -286,11 +325,7 @@ export const api = {
       body: JSON.stringify(body),
     });
     if (res.status === 401) handleUnauthorized();
-    const envelope = (await res.json().catch(() => ({ message: null, error: null }))) as Omit<
-      SendResult,
-      'httpStatus'
-    >;
-    return { ...envelope, httpStatus: res.status };
+    return parseSendEnvelope(await res.json().catch(() => null), res.status);
   },
 
   /** Multipart con barra de progreso (XHR: fetch no reporta progreso de subida). */
@@ -317,12 +352,13 @@ export const api = {
           reject(new UnauthorizedError());
           return;
         }
+        let raw: unknown = null;
         try {
-          const envelope = JSON.parse(xhr.responseText) as Omit<SendResult, 'httpStatus'>;
-          resolve({ ...envelope, httpStatus: xhr.status });
+          raw = JSON.parse(xhr.responseText);
         } catch {
-          resolve({ message: null, error: null, httpStatus: xhr.status });
+          raw = null; // 502 del proxy, body vacío… lo resuelve parseSendEnvelope
         }
+        resolve(parseSendEnvelope(raw, xhr.status));
       };
       xhr.onerror = () => reject(new Error('network')); // red → misma key
       xhr.send(form);

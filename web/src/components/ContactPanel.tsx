@@ -14,7 +14,7 @@ function OrderCard({ order, compact = false }: { order: GourmetifyOrder; compact
     <div className={`rounded-xl border border-line bg-rice ${compact ? 'px-3 py-2' : 'p-3'}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="tnum font-mono text-xs font-medium text-sumi/80">
-          {order.number ? `#${order.number}` : 'Pedido'}
+          {order.number ? `Pedido #${order.number}` : 'Pedido'}
         </span>
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${orderChipClasses(order.statusKind)}`}

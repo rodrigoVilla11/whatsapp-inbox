@@ -250,7 +250,7 @@ export function Thread({
                 <span
                   className={`ml-auto shrink-0 truncate rounded-full px-2.5 py-1 text-[11px] ${orderChipClasses(chip.order.statusKind)}`}
                 >
-                  {chip.order.number ? `#${chip.order.number} · ` : ''}
+                  {/* Solo el estado: el número va en la lista y en el panel */}
                   {chip.order.statusLabel}
                   {chip.extra > 0 ? ` +${chip.extra}` : ''}
                 </span>

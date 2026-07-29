@@ -10,7 +10,7 @@ import { MediaDownloadService } from './media-download.service';
 import { MediaSweepService } from './media-sweep.service';
 import { MEDIA_STORAGE, NoopMediaStorage } from './media-storage';
 import { OutboundMediaService } from './outbound-media.service';
-import { R2MediaStorage } from './r2-media-storage';
+import { R2MediaStorage, r2EndpointForAccount } from './r2-media-storage';
 
 @Module({
   imports: [QueueModule, MessagingModule],
@@ -27,7 +27,13 @@ import { R2MediaStorage } from './r2-media-storage';
       provide: MEDIA_STORAGE,
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const endpoint = config.get<string>('R2_ENDPOINT');
+        // R2_ACCOUNT_ID es la forma canónica (misma que el resto de
+        // Gourmetify): el endpoint S3 se DERIVA de él. R2_ENDPOINT sigue
+        // aceptándose como override explícito para entornos raros.
+        const accountId = config.get<string>('R2_ACCOUNT_ID');
+        const endpoint =
+          config.get<string>('R2_ENDPOINT') ||
+          (accountId ? r2EndpointForAccount(accountId) : undefined);
         const accessKeyId = config.get<string>('R2_ACCESS_KEY_ID');
         const secretAccessKey = config.get<string>('R2_SECRET_ACCESS_KEY');
         const bucket = config.get<string>('R2_BUCKET');

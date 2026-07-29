@@ -280,6 +280,42 @@ describe('PUT /provisioning/tenants/:id/whatsapp', () => {
     expect(db.whatsappAccount.findFirst({ where: { phoneNumberId: 'PN_GFY_1' } })).toBeNull();
   });
 
+  it('normaliza el copy-paste: espacios y saltos de línea en el token no rompen nada', async () => {
+    await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_100/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send({
+        ...CREDS,
+        // así queda un token largo pegado desde el panel de Meta
+        accessToken: '  token-del\n-cliente  ',
+        phoneNumberId: ' PN_GFY_1 ',
+      })
+      .expect(200);
+    expect(graphCheck).toHaveBeenCalledWith('PN_GFY_1', 'token-del-cliente');
+  });
+
+  it('los errores de Meta llegan con una pista accionable', async () => {
+    graphCheck.mockResolvedValueOnce({
+      ok: false,
+      reason: 'The access token could not be decrypted',
+    });
+    const res = await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_100/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send(CREDS)
+      .expect(400);
+    expect(res.body.message).toMatch(/could not be decrypted/); // el textual de Meta
+    expect(res.body.message).toMatch(/COMPLETO/); // + la pista nuestra
+
+    graphCheck.mockResolvedValueOnce({ ok: false, reason: 'Session has expired' });
+    const expired = await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_100/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send(CREDS)
+      .expect(400);
+    expect(expired.body.message).toMatch(/System User/);
+  });
+
   it('conecta: MetaApp + cuenta cifradas, devuelve webhook path + verify token y NINGÚN secreto', async () => {
     const res = await request(app.getHttpServer())
       .put('/provisioning/tenants/gfy_100/whatsapp')

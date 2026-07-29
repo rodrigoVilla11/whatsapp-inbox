@@ -58,6 +58,32 @@ function requireString(value: unknown, field: string): string {
   return value.trim();
 }
 
+/**
+ * Credenciales de Meta: ningún id/secret/token válido lleva espacios, y el
+ * copy-paste de un token largo desde el panel de Meta mete saltos de línea
+ * con facilidad. Se limpian TODOS los blancos antes de validar.
+ */
+function requireCredential(value: unknown, field: string): string {
+  return requireString(value, field).replace(/\s+/g, '');
+}
+
+/** Traduce los errores típicos de Meta a algo accionable para el cliente. */
+function hintForMetaError(reason: string): string {
+  if (/could not be decrypted|malformed|invalid oauth access token/i.test(reason)) {
+    return ' — revisá que el token esté COMPLETO (los de System User son muy largos y se cortan al copiar) y que sea de la misma app del App ID';
+  }
+  if (/expired|session has expired/i.test(reason)) {
+    return ' — ese token venció: generá uno de System User con expiración "Nunca"';
+  }
+  if (/unsupported get request|does not exist|cannot be loaded/i.test(reason)) {
+    return ' — revisá el Phone Number ID (es el ID de la API, no el número de teléfono) y que el token tenga acceso a esa cuenta';
+  }
+  if (/permission|scope/i.test(reason)) {
+    return ' — al token le faltan permisos: whatsapp_business_messaging y whatsapp_business_management';
+  }
+  return '';
+}
+
 function slugify(name: string): string {
   return (
     name
@@ -262,16 +288,19 @@ export class ProvisioningService {
       throw new NotFoundException(`No hay tenant para gourmetifyTenantId=${gourmetifyTenantId}`);
     }
 
-    const metaAppId = requireString(input.metaAppId, 'metaAppId');
-    const metaAppSecret = requireString(input.metaAppSecret, 'metaAppSecret');
-    const phoneNumberId = requireString(input.phoneNumberId, 'phoneNumberId');
-    const wabaId = requireString(input.wabaId, 'wabaId');
-    const accessToken = requireString(input.accessToken, 'accessToken');
+    const metaAppId = requireCredential(input.metaAppId, 'metaAppId');
+    const metaAppSecret = requireCredential(input.metaAppSecret, 'metaAppSecret');
+    const phoneNumberId = requireCredential(input.phoneNumberId, 'phoneNumberId');
+    const wabaId = requireCredential(input.wabaId, 'wabaId');
+    const accessToken = requireCredential(input.accessToken, 'accessToken');
 
-    // Validación en vivo ANTES de tocar la base.
+    // Validación en vivo ANTES de tocar la base: nada se persiste si Meta
+    // rechaza (el operador puede reintentar con las credenciales corregidas).
     const check = await this.checkCredentials(phoneNumberId, accessToken);
     if (!check.ok) {
-      throw new BadRequestException(`Meta rechazó las credenciales: ${check.reason}`);
+      throw new BadRequestException(
+        `Meta rechazó las credenciales: ${check.reason}${hintForMetaError(check.reason)}`,
+      );
     }
     const displayPhone =
       typeof input.displayPhone === 'string' && input.displayPhone.trim()

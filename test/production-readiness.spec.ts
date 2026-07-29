@@ -84,7 +84,7 @@ describe('validación de env al boot', () => {
     DATABASE_URL: 'postgresql://x',
     REDIS_URL: 'redis://x',
     ENCRYPTION_KEY: 'k',
-    R2_ENDPOINT: 'e',
+    R2_ACCOUNT_ID: 'd79fdd9bc4e504038befeb0348b0e5a7',
     R2_ACCESS_KEY_ID: 'a',
     R2_SECRET_ACCESS_KEY: 's',
     R2_BUCKET: 'b',
@@ -113,10 +113,17 @@ describe('validación de env al boot', () => {
     const problems = envProblems({
       DATABASE_URL: 'postgresql://x',
       ENCRYPTION_KEY: 'k',
-      R2_ENDPOINT: 'e',
+      R2_ACCOUNT_ID: 'd79fdd9bc4e504038befeb0348b0e5a7',
     });
     expect(problems.join(' ')).toMatch(/R2 incompleto/);
     expect(problems.join(' ')).toMatch(/R2_BUCKET/);
+  });
+
+  it('R2_ENDPOINT explícito cubre a R2_ACCOUNT_ID (override)', () => {
+    const { R2_ACCOUNT_ID: _derivado, ...conOverride } = PROD_OK;
+    expect(envProblems({ ...conOverride, R2_ENDPOINT: 'https://x.r2.cloudflarestorage.com' })).toEqual(
+      [],
+    );
   });
 });
 

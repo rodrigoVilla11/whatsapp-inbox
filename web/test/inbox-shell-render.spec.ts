@@ -9,9 +9,10 @@ import React, { act, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'c1' }),
-  useRouter: () => ({ push: () => undefined, replace: () => undefined }),
+  useRouter: () => ({ push: pushMock, replace: () => undefined }),
 }));
 
 // io como spy: los tests de auth verifican CUÁNDO se instancia la conexión.
@@ -62,6 +63,7 @@ let redirectSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   errors = [];
   ioMock.mockClear();
+  pushMock.mockClear();
   redirectSpy = vi.spyOn(authRedirect, 'trigger').mockImplementation(() => undefined);
   errorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
     errors.push(args.map(String).join(' '));
@@ -120,6 +122,48 @@ describe('InboxShell completo (click en conversación)', () => {
     expect(useInbox.getState().selectedId).toBe('c1');
     // el socket SÍ se instanció — recién con la sesión resuelta
     expect(ioMock).toHaveBeenCalled();
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('panorámica: "Ver todos" da toda la pantalla a la lista y elegir un chat la cierra', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(StrictMode, null, React.createElement(InboxShell)));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const toggle = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Ver todos'),
+    );
+    expect(toggle).toBeTruthy();
+
+    await act(async () => {
+      toggle!.click();
+    });
+
+    const list = container.querySelector('ul[aria-label="Conversaciones"]')!;
+    expect(list.className).toContain('grid'); // filas en grilla, no columna
+    expect(container.querySelector('main')!.className).toContain('hidden'); // hilo fuera
+    expect(toggle!.getAttribute('aria-pressed')).toBe('true');
+
+    // elegir un chat: navega Y devuelve el layout de 3 columnas
+    const row = container.querySelector('#conv-row-c1 button') as HTMLButtonElement;
+    await act(async () => {
+      row.click();
+    });
+
+    expect(pushMock).toHaveBeenCalledWith('/c/c1');
+    expect(container.querySelector('main')!.className).not.toContain('hidden');
+    expect(container.querySelector('ul[aria-label="Conversaciones"]')!.className).not.toContain(
+      'grid',
+    );
 
     act(() => root.unmount());
     container.remove();

@@ -15,6 +15,19 @@ export interface R2Config {
   bucket: string;
 }
 
+/**
+ * Endpoint de la API S3 de R2 a partir del Account ID — la MISMA convención
+ * que el resto de Gourmetify (que configura `R2_ACCOUNT_ID`, no una URL).
+ *
+ * Ojo con el dominio público del bucket (`https://pub-<hash>.r2.dev`): sirve
+ * objetos por HTTP pero NO habla la API S3 (rechaza el handshake TLS del
+ * SDK), así que no es un endpoint válido acá. Además el bucket de media es
+ * privado a propósito: se sirve con URLs firmadas de TTL corto.
+ */
+export function r2EndpointForAccount(accountId: string): string {
+  return `https://${accountId.trim()}.r2.cloudflarestorage.com`;
+}
+
 const DELETE_BATCH_SIZE = 1000; // límite de DeleteObjects en S3/R2
 
 /**

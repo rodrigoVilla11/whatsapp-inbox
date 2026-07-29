@@ -190,7 +190,7 @@ POST /gourmetify/orders
   "gourmetifyTenantId": "<id del cliente en Gourmetify>",
   "order": {
     "id": "<id único del pedido en Gourmetify>",
-    "number": "123",                        // opcional, display
+    "number": 123,                          // opcional, display (número o string)
     "customerPhone": "5493415551234",       // dígitos internacionales
     "statusLabel": "En preparación",        // texto listo para mostrar
     "statusKind": "in_progress",            // pending|in_progress|ready|done|cancelled
