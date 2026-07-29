@@ -119,6 +119,12 @@ PUT /provisioning/tenants/<gourmetifyTenantId>/whatsapp
 - **Valida EN VIVO contra Graph API antes de guardar**: token vencido o
   phone_number_id ajeno → 400 con el mensaje de Meta textual.
 - Los secretos se cifran (AES-GCM) y **jamás vuelven en una respuesta**.
+- **La App de Meta se comparte** entre tenants (modelo Tech Provider: una
+  app, N números; el webhook resuelve el tenant por `phone_number_id`). Lo
+  exclusivo es el NÚMERO: conectarlo a otro restaurante da 409.
+- **Cambiar de número** (típico: prueba → real) es repetir el PUT con el
+  `phoneNumberId` nuevo: el anterior del mismo tenant queda `DISCONNECTED`
+  (su historial se conserva) y la respuesta trae `replacedNumbers: 1`.
 - `webhook.url` + `webhook.verifyToken` son lo que el cliente pega en su
   panel de Meta (Callback URL propia por cliente: `/webhooks/whatsapp/<ref>`
   — la firma se valida con SU app secret). Requiere `PUBLIC_API_URL` en el
@@ -131,7 +137,33 @@ PUT /provisioning/tenants/<gourmetifyTenantId>/whatsapp
 ```
 GET /provisioning/tenants/<gourmetifyTenantId>/whatsapp
 → { connected: false, tenant } | mismo shape que 4.2 (sin secretos)
+
+GET /provisioning/tenants
+→ [{ id, slug, name, timezone, gourmetifyTenantId, linkedToGourmetify,
+     whatsapp: { phoneNumberId, displayPhoneNumber, status } | null,
+     hasConversations }]   ← diagnóstico: qué tenants hay y cómo están
 ```
+
+### 4.4 Restaurante que YA usaba el inbox (adopción)
+
+Si el restaurante ya tenía tenant en el inbox (por ejemplo el del seed) y
+ahora se conecta desde Gourmetify, **no hay que crear uno nuevo**: sus
+credenciales de Meta ya están atadas al tenant viejo y conectar el mismo
+número a otro tenant devuelve 409. Se adopta:
+
+```
+POST /provisioning/tenants
+{ "gourmetifyTenantId": "...", "name": "...", "adoptSlug": "nova-sushi" }
+→ 201 { created: false, adopted: true, tenant, owner }
+```
+
+- Conserva conversaciones, contactos y usuarios del tenant adoptado.
+- Si otro tenant VACÍO estaba ocupando ese `gourmetifyTenantId` (un intento
+  anterior), se libera solo; si tenía datos → 409 para que decida una
+  persona.
+- Después, el PUT de 4.2 con las mismas credenciales funciona: la MetaApp
+  existente se REUSA (mismo `ref` → la Callback URL ya configurada en Meta
+  sigue válida) y el verify token **no se regenera** salvo que se mande uno.
 
 ### 4.4 Checklist que la UI de Gourmetify le muestra al cliente
 

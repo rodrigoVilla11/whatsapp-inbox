@@ -141,6 +141,125 @@ describe('POST /provisioning/tenants', () => {
   });
 });
 
+describe('adopción de un tenant existente (adoptSlug)', () => {
+  it('GET /provisioning/tenants muestra el estado (vinculado, número, si tiene datos)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/provisioning/tenants')
+      .set('x-provisioning-key', SECRET)
+      .expect(200);
+    const slugs = (res.body as Array<{ slug: string }>).map((t) => t.slug);
+    expect(slugs).toContain('la-parrilla-de-ana');
+    const one = (res.body as Array<{ slug: string; linkedToGourmetify: boolean }>).find(
+      (t) => t.slug === 'la-parrilla-de-ana',
+    )!;
+    expect(one.linkedToGourmetify).toBe(true);
+  });
+
+  it('EL CASO REAL: el número ya está en el tenant del seed → adoptar lo destraba', async () => {
+    // Tenant "viejo" (seed) con su número y su historial, SIN vincular.
+    db.tenant.seed({ id: 'ten_seed', slug: 'nova-sushi', name: 'Nova Sushi' });
+    db.metaApp.seed({
+      id: 'app_seed', ref: 'default', name: 'App', appId: 'APP_SEED',
+      appSecretEnc: encryption.encrypt('secreto-seed'),
+      verifyTokenEnc: encryption.encrypt('verify-del-seed'),
+      keyVersion: 1,
+    });
+    db.whatsappAccount.seed({
+      id: 'acc_seed', tenantId: 'ten_seed', metaAppId: 'app_seed',
+      phoneNumberId: 'PN_SEED', wabaId: 'WABA', displayPhoneNumber: '+1555', accessTokenEnc: 'z',
+    });
+    db.conversation.seed({ id: 'conv_hist', tenantId: 'ten_seed', whatsappAccountId: 'acc_seed', contactId: 'ct' });
+
+    const CREDS = {
+      metaAppId: 'APP_SEED', metaAppSecret: 's', phoneNumberId: 'PN_SEED',
+      wabaId: 'WABA', accessToken: 't',
+    };
+
+    // 1. Gourmetify crea su tenant nuevo y conectar rebota (el síntoma).
+    await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_real',
+      name: 'Nova Sushi',
+      owner: { email: 'dueno@nova.test', name: 'Dueño' },
+    }).expect(201);
+    await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_real/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send(CREDS)
+      .expect(409);
+
+    // 2. Adoptar el tenant del seed: el tenant nuevo estaba VACÍO → se libera.
+    const adopted = await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_real',
+      name: 'Nova Sushi',
+      adoptSlug: 'nova-sushi',
+    }).expect(201);
+    expect(adopted.body).toMatchObject({ adopted: true, created: false });
+    expect(adopted.body.tenant.slug).toBe('nova-sushi');
+
+    // 3. Ahora la misma conexión funciona (mismo tenant) y el historial sigue.
+    const connected = await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_real/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send(CREDS)
+      .expect(200);
+    expect(connected.body.connected).toBe(true);
+    expect(db.conversation.findFirst({ where: { id: 'conv_hist' } })).toBeTruthy();
+    expect(db.tenant.findFirst({ where: { slug: 'nova-sushi' } })!.gourmetifyTenantId).toBe('gfy_real');
+    // La MetaApp del seed se REUSA: mismo ref → la Callback URL configurada
+    // en Meta sigue sirviendo, y el verify token no se regeneró.
+    expect(connected.body.webhook.path).toBe('/webhooks/whatsapp/default');
+    expect(db.metaApp.findMany({ where: { appId: 'APP_SEED' } })).toHaveLength(1);
+  });
+
+  it('reusar la MetaApp conserva el verify token (no hay que re-verificar en Meta)', async () => {
+    db.tenant.seed({ id: 'ten_vt', slug: 'vt-resto', name: 'VT', gourmetifyTenantId: 'gfy_vt' });
+    db.metaApp.seed({
+      id: 'app_vt', ref: 'default-vt', name: 'App VT', appId: 'APP_VT',
+      appSecretEnc: encryption.encrypt('viejo'),
+      verifyTokenEnc: encryption.encrypt('token-ya-configurado-en-meta'), keyVersion: 1,
+    });
+
+    const res = await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_vt/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send({
+        metaAppId: 'APP_VT', metaAppSecret: 'nuevo-secreto',
+        phoneNumberId: 'PN_VT', wabaId: 'W', accessToken: 't',
+      })
+      .expect(200);
+
+    expect(res.body.webhook.verifyToken).toBe('token-ya-configurado-en-meta');
+    // el secret SÍ se actualizó
+    expect(encryption.decrypt(db.metaApp.findFirst({ where: { id: 'app_vt' } })!.appSecretEnc as string)).toBe(
+      'nuevo-secreto',
+    );
+  });
+
+  it('si el tenant vinculado YA tiene datos, no se pisa nada → 409 accionable', async () => {
+    db.tenant.seed({ id: 'ten_otro', slug: 'otro-resto', name: 'Otro' });
+    db.tenant.seed({ id: 'ten_ocupado', slug: 'ocupado', name: 'Ocupado', gourmetifyTenantId: 'gfy_ocupado' });
+    db.conversation.seed({ id: 'c_x', tenantId: 'ten_ocupado', whatsappAccountId: 'a', contactId: 'c' });
+
+    const res = await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_ocupado',
+      name: 'X',
+      adoptSlug: 'otro-resto',
+    }).expect(409);
+    expect(res.body.message).toMatch(/tiene datos propios/);
+  });
+
+  it('slug inexistente → 404; tenant de otro cliente → 409', async () => {
+    await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_x', name: 'X', adoptSlug: 'no-existe',
+    }).expect(404);
+
+    db.tenant.seed({ id: 'ten_ajeno', slug: 'ajeno', name: 'Ajeno', gourmetifyTenantId: 'gfy_dueno' });
+    await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_intruso', name: 'X', adoptSlug: 'ajeno',
+    }).expect(409);
+  });
+});
+
 describe('PUT /provisioning/tenants/:id/whatsapp', () => {
   const CREDS = {
     metaAppId: '111222333',
@@ -206,6 +325,61 @@ describe('PUT /provisioning/tenants/:id/whatsapp', () => {
       .set('x-provisioning-key', SECRET)
       .send({ ...CREDS, metaAppId: '999888777' })
       .expect(409);
+  });
+
+  it('dos restaurantes COMPARTEN la misma App de Meta con números distintos (Tech Provider)', async () => {
+    const shared = { metaAppId: 'APP_COMPARTIDA', metaAppSecret: 's', wabaId: 'W', accessToken: 't' };
+    for (const [id, phone] of [
+      ['gfy_share_a', 'PN_SHARE_A'],
+      ['gfy_share_b', 'PN_SHARE_B'],
+    ]) {
+      await post('/provisioning/tenants', {
+        gourmetifyTenantId: id,
+        name: `Resto ${id}`,
+        owner: { email: `${id}@x.com`, name: 'X' },
+      }).expect(201);
+      await request(app.getHttpServer())
+        .put(`/provisioning/tenants/${id}/whatsapp`)
+        .set('x-provisioning-key', SECRET)
+        .send({ ...shared, phoneNumberId: phone })
+        .expect(200);
+    }
+    // UNA sola MetaApp para los dos: el tenant lo resuelve el phone_number_id
+    expect(db.metaApp.findMany({ where: { appId: 'APP_COMPARTIDA' } })).toHaveLength(1);
+  });
+
+  it('número nuevo en el MISMO tenant desconecta el anterior (prueba → real)', async () => {
+    const creds = { metaAppId: 'APP_SWAP', metaAppSecret: 's', wabaId: 'W', accessToken: 't' };
+    await post('/provisioning/tenants', {
+      gourmetifyTenantId: 'gfy_swap',
+      name: 'Swap',
+      owner: { email: 'swap@x.com', name: 'S' },
+    }).expect(201);
+
+    await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_swap/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send({ ...creds, phoneNumberId: 'PN_PRUEBA' })
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .put('/provisioning/tenants/gfy_swap/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .send({ ...creds, phoneNumberId: 'PN_REAL' })
+      .expect(200);
+
+    expect(res.body.replacedNumbers).toBe(1);
+    expect(res.body.account.phoneNumberId).toBe('PN_REAL');
+    expect(db.whatsappAccount.findFirst({ where: { phoneNumberId: 'PN_PRUEBA' } })!.status).toBe(
+      'DISCONNECTED',
+    );
+
+    // el estado devuelve el VIGENTE, no el viejo
+    const status = await request(app.getHttpServer())
+      .get('/provisioning/tenants/gfy_swap/whatsapp')
+      .set('x-provisioning-key', SECRET)
+      .expect(200);
+    expect(status.body.account.phoneNumberId).toBe('PN_REAL');
   });
 
   it('tenant inexistente → 404', async () => {

@@ -31,6 +31,14 @@ export interface TenantProvisionInput {
   name?: unknown;
   timezone?: unknown;
   owner?: { email?: unknown; name?: unknown; password?: unknown };
+  /**
+   * Vincula un tenant que YA existe (por slug) en vez de crear uno nuevo:
+   * el caso del restaurante que usaba el inbox antes de conectarse a
+   * Gourmetify (o del tenant del seed). Conserva conversaciones, contactos
+   * y usuarios — y evita el 409 de "ese número ya está conectado a otro
+   * restaurante" al reconectar las mismas credenciales de Meta.
+   */
+  adoptSlug?: unknown;
 }
 
 export interface WhatsappConnectInput {
@@ -72,17 +80,56 @@ export class ProvisioningService {
     @Inject(GRAPH_CREDENTIALS_CHECK) private readonly checkCredentials: GraphCredentialsCheck,
   ) {}
 
+  /** Estado de los tenants — diagnóstico para el operador (sin secretos). */
+  async listTenants(): Promise<unknown[]> {
+    const db = this.prisma.db;
+    const tenants = (await db.tenant.findMany({ orderBy: [{ createdAt: 'asc' }] })) as Tenant[];
+    return Promise.all(
+      tenants.map(async (tenant) => {
+        const account = ((await db.whatsappAccount.findFirst({
+          where: { tenantId: tenant.id, status: 'ACTIVE' },
+        })) ??
+          (await db.whatsappAccount.findFirst({
+            where: { tenantId: tenant.id },
+          }))) as WhatsappAccount | null;
+        const someConversation = await db.conversation.findFirst({
+          where: { tenantId: tenant.id },
+        });
+        return {
+          ...this.serializeTenant(tenant),
+          linkedToGourmetify: !!tenant.gourmetifyTenantId,
+          whatsapp: account
+            ? {
+                phoneNumberId: account.phoneNumberId,
+                displayPhoneNumber: account.displayPhoneNumber,
+                status: account.status,
+              }
+            : null,
+          hasConversations: !!someConversation,
+        };
+      }),
+    );
+  }
+
   /** Alta/actualización idempotente por gourmetifyTenantId. */
   async upsertTenant(input: TenantProvisionInput): Promise<unknown> {
     const gourmetifyTenantId = requireString(input.gourmetifyTenantId, 'gourmetifyTenantId');
     const name = requireString(input.name, 'name');
     const timezone =
       typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : null;
+    const adoptSlug =
+      typeof input.adoptSlug === 'string' && input.adoptSlug.trim()
+        ? input.adoptSlug.trim().toLowerCase()
+        : null;
     const db = this.prisma.db;
 
     const existing = (await db.tenant.findUnique({
       where: { gourmetifyTenantId },
     })) as Tenant | null;
+
+    if (adoptSlug) {
+      return this.adoptTenant({ adoptSlug, gourmetifyTenantId, name, timezone, existing });
+    }
 
     if (existing) {
       await db.tenant.update({
@@ -142,6 +189,69 @@ export class ProvisioningService {
     };
   }
 
+  /**
+   * Vincula un tenant existente (por slug) al cliente de Gourmetify.
+   * Si otro tenant VACÍO estaba ocupando ese gourmetifyTenantId (típico:
+   * el que se creó en un intento anterior), se libera automáticamente;
+   * si tenía datos, decide una persona.
+   */
+  private async adoptTenant(args: {
+    adoptSlug: string;
+    gourmetifyTenantId: string;
+    name: string;
+    timezone: string | null;
+    existing: Tenant | null;
+  }): Promise<unknown> {
+    const { adoptSlug, gourmetifyTenantId, name, timezone, existing } = args;
+    const db = this.prisma.db;
+
+    const target = (await db.tenant.findUnique({ where: { slug: adoptSlug } })) as Tenant | null;
+    if (!target) {
+      throw new NotFoundException(`No existe un tenant con slug "${adoptSlug}"`);
+    }
+    if (target.gourmetifyTenantId && target.gourmetifyTenantId !== gourmetifyTenantId) {
+      throw new ConflictException(
+        `El tenant "${adoptSlug}" ya está vinculado a otro cliente de Gourmetify`,
+      );
+    }
+
+    if (existing && existing.id !== target.id) {
+      const [conversation, account] = await Promise.all([
+        db.conversation.findFirst({ where: { tenantId: existing.id } }),
+        db.whatsappAccount.findFirst({ where: { tenantId: existing.id } }),
+      ]);
+      if (conversation || account) {
+        throw new ConflictException(
+          `El cliente ya está vinculado al tenant "${existing.slug}", que tiene datos propios — ` +
+            'unificalos a mano antes de adoptar otro',
+        );
+      }
+      // Tenant vacío de un intento anterior: se libera para no chocar con
+      // el unique de gourmetifyTenantId.
+      await db.tenant.update({
+        where: { id: existing.id },
+        data: { gourmetifyTenantId: null },
+      });
+      this.logger.log(`Tenant vacío ${existing.slug} liberado para adoptar ${adoptSlug}`);
+    }
+
+    await db.tenant.update({
+      where: { id: target.id },
+      data: { gourmetifyTenantId, name, ...(timezone ? { timezone } : {}) },
+    });
+    const owner = (await db.user.findFirst({
+      where: { tenantId: target.id, role: 'OWNER' },
+    })) as User | null;
+
+    this.logger.log(`Tenant adoptado: ${adoptSlug} ← gfy:${gourmetifyTenantId}`);
+    return {
+      created: false,
+      adopted: true,
+      tenant: this.serializeTenant({ ...target, name, gourmetifyTenantId } as Tenant),
+      owner: owner ? { email: owner.email, name: owner.name } : null,
+    };
+  }
+
   /** Conecta (o re-conecta) la cuenta de WhatsApp del tenant. */
   async connectWhatsapp(gourmetifyTenantId: string, input: WhatsappConnectInput): Promise<unknown> {
     const db = this.prisma.db;
@@ -177,36 +287,64 @@ export class ProvisioningService {
     }
 
     const ref = `gfy-${gourmetifyTenantId}`.slice(0, 60);
-    const verifyToken =
+    const providedVerifyToken =
       typeof input.verifyToken === 'string' && input.verifyToken.trim()
         ? input.verifyToken.trim()
-        : randomBytes(24).toString('base64url');
+        : null;
     const keyVersion = this.encryption.currentKeyVersion;
 
+    /**
+     * MetaApp por App ID (unique global). Si ya existe — el caso del tenant
+     * que venía del seed, o un re-conectar — se REUSA en vez de crear otra:
+     * conserva su `ref`, así la Callback URL que ya está configurada en el
+     * panel de Meta sigue siendo válida. Y el verify token NO se regenera
+     * salvo que manden uno: regenerarlo obligaría a re-verificar en Meta.
+     */
+    const byAppId = (await db.metaApp.findUnique({ where: { appId: metaAppId } })) as MetaApp | null;
     let metaApp: MetaApp;
-    try {
-      metaApp = (await db.metaApp.upsert({
-        where: { ref },
-        create: {
-          ref,
-          name: `Gourmetify — ${tenant.name}`,
-          appId: metaAppId,
+    let verifyToken: string;
+
+    if (byAppId) {
+      // Varios tenants PUEDEN compartir la misma MetaApp: es el modelo Tech
+      // Provider de fase 1 (una app, N números; el webhook resuelve el
+      // tenant por phone_number_id). Lo exclusivo es el NÚMERO, no la app.
+      verifyToken = providedVerifyToken ?? this.encryption.decrypt(byAppId.verifyTokenEnc);
+      metaApp = (await db.metaApp.update({
+        where: { id: byAppId.id },
+        data: {
           appSecretEnc: this.encryption.encrypt(metaAppSecret),
-          verifyTokenEnc: this.encryption.encrypt(verifyToken),
           keyVersion,
-        },
-        update: {
-          appId: metaAppId,
-          appSecretEnc: this.encryption.encrypt(metaAppSecret),
-          verifyTokenEnc: this.encryption.encrypt(verifyToken),
-          keyVersion,
+          ...(providedVerifyToken
+            ? { verifyTokenEnc: this.encryption.encrypt(providedVerifyToken) }
+            : {}),
         },
       })) as MetaApp;
-    } catch (error) {
-      if ((error as { code?: string }).code === 'P2002') {
-        throw new ConflictException('Ese App ID de Meta ya está en uso por otro restaurante');
+    } else {
+      verifyToken = providedVerifyToken ?? randomBytes(24).toString('base64url');
+      try {
+        metaApp = (await db.metaApp.upsert({
+          where: { ref },
+          create: {
+            ref,
+            name: `Gourmetify — ${tenant.name}`,
+            appId: metaAppId,
+            appSecretEnc: this.encryption.encrypt(metaAppSecret),
+            verifyTokenEnc: this.encryption.encrypt(verifyToken),
+            keyVersion,
+          },
+          update: {
+            appId: metaAppId,
+            appSecretEnc: this.encryption.encrypt(metaAppSecret),
+            verifyTokenEnc: this.encryption.encrypt(verifyToken),
+            keyVersion,
+          },
+        })) as MetaApp;
+      } catch (error) {
+        if ((error as { code?: string }).code === 'P2002') {
+          throw new ConflictException('Ese App ID de Meta ya está en uso por otro restaurante');
+        }
+        throw error;
       }
-      throw error;
     }
 
     const account = (await db.whatsappAccount.upsert({
@@ -231,8 +369,26 @@ export class ProvisioningService {
       },
     })) as WhatsappAccount;
 
+    // Un tenant opera UN número a la vez: al conectar otro (típico paso del
+    // número de prueba al real), el anterior queda DISCONNECTED. Su
+    // historial de conversaciones se conserva y se sigue viendo.
+    const { count: replaced } = await db.whatsappAccount.updateMany({
+      where: {
+        tenantId: tenant.id,
+        phoneNumberId: { not: phoneNumberId },
+        status: { not: 'DISCONNECTED' },
+      },
+      data: { status: 'DISCONNECTED' },
+    });
+    if (replaced > 0) {
+      this.logger.log(`${replaced} número(s) anterior(es) de ${tenant.slug} quedaron DISCONNECTED`);
+    }
+
     this.logger.log(`WhatsApp conectado: tenant ${tenant.slug}, número ${displayPhone}`);
-    return this.connectionStatus(tenant, metaApp, account, verifyToken);
+    return {
+      ...(this.connectionStatus(tenant, metaApp, account, verifyToken) as Record<string, unknown>),
+      replacedNumbers: replaced,
+    };
   }
 
   /** Estado de la conexión — sin secretos (el verify token sí: va al panel de Meta). */
@@ -244,9 +400,13 @@ export class ProvisioningService {
     if (!tenant) {
       throw new NotFoundException(`No hay tenant para gourmetifyTenantId=${gourmetifyTenantId}`);
     }
-    const account = (await db.whatsappAccount.findFirst({
-      where: { tenantId: tenant.id },
-    })) as WhatsappAccount | null;
+    // El número vigente es el ACTIVE; los reemplazados quedan DISCONNECTED.
+    const account = ((await db.whatsappAccount.findFirst({
+      where: { tenantId: tenant.id, status: 'ACTIVE' },
+    })) ??
+      (await db.whatsappAccount.findFirst({
+        where: { tenantId: tenant.id },
+      }))) as WhatsappAccount | null;
     if (!account) {
       return { connected: false, tenant: this.serializeTenant(tenant) };
     }
