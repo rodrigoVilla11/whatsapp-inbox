@@ -1,6 +1,14 @@
 /**
- * Estructura de key con tenant PRIMERO:
- *   {tenantId}/{conversationId}/{messageId}/{filename-sanitizado}
+ * Namespace del inbox dentro del bucket. El bucket de media se comparte con
+ * el resto de Gourmetify (StockQuickly escribe sus propios objetos ahí), así
+ * que todo lo del inbox vive bajo un prefijo propio: nada se mezcla y "lo del
+ * inbox" es enumerable de un saque.
+ */
+export const MEDIA_KEY_PREFIX = 'whatsapp-inbox';
+
+/**
+ * Estructura de key con el tenant primero (después del namespace):
+ *   whatsapp-inbox/{tenantId}/{conversationId}/{messageId}/{filename}
  * Así el borrado por tenant o por conversación es un borrado por prefijo.
  */
 export function buildMediaKey(
@@ -9,7 +17,7 @@ export function buildMediaKey(
   messageId: string,
   filename: string,
 ): string {
-  return `${tenantId}/${conversationId}/${messageId}/${sanitizeFilename(filename)}`;
+  return `${MEDIA_KEY_PREFIX}/${tenantId}/${conversationId}/${messageId}/${sanitizeFilename(filename)}`;
 }
 
 export function sanitizeFilename(name: string): string {

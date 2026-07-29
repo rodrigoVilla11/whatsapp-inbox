@@ -93,7 +93,8 @@ function Media({ message, outbound }: { message: Message; outbound: boolean }) {
   if (message.mediaStatus === 'PENDING') {
     return (
       <div className="flex h-32 w-48 animate-pulse items-center justify-center rounded-xl bg-piedra-soft text-xs text-piedra">
-        Descargando…
+        {/* Saliente el archivo SUBE; sólo lo entrante se descarga de Meta. */}
+        {outbound ? 'Subiendo…' : 'Descargando…'}
       </div>
     );
   }
@@ -259,12 +260,19 @@ export function MessageBubble({
                 ? 'Sin conexión con el servidor. Reintentá.'
                 : (message.errorDetail ?? message.errorTitle ?? 'No se pudo enviar el mensaje.')}
             </p>
-            <button
-              onClick={() => void retrySend(message)}
-              className="mt-1 min-h-10 rounded-lg bg-gari px-3 text-xs font-semibold text-white hover:bg-gari-ink"
-            >
-              Reintentar
-            </button>
+            {/* Media no se puede reintentar: el File ya no está en memoria y
+                retrySend reenviaría sólo el caption como texto. Se adjunta
+                de nuevo, y se dice así. */}
+            {hasMedia ? (
+              <p className="mt-1 text-xs text-gari-ink/80">Adjuntá el archivo de nuevo.</p>
+            ) : (
+              <button
+                onClick={() => void retrySend(message)}
+                className="mt-1 min-h-10 rounded-lg bg-gari px-3 text-xs font-semibold text-white hover:bg-gari-ink"
+              >
+                Reintentar
+              </button>
+            )}
           </div>
         )}
 

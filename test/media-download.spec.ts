@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaDownloadService } from '../src/media/media-download.service';
+import { MEDIA_KEY_PREFIX } from '../src/media/media-keys';
 import { MediaTooLargeError } from '../src/media/media-limits';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import type { GraphApiClient } from '../src/whatsapp/graph-api.client';
@@ -68,8 +69,8 @@ describe('MediaDownloadService', () => {
     const msg = db.message.rows[0];
     expect(msg.mediaStatus).toBe('DOWNLOADED');
     expect(msg.mediaSizeBytes).toBe(BODY.length);
-    // mediaUrl = KEY con tenant primero, no URL
-    expect(msg.mediaUrl).toBe(`${TENANT}/conv_1/msg_1/media.jpg`);
+    // mediaUrl = KEY (namespace del inbox + tenant primero), no URL
+    expect(msg.mediaUrl).toBe(`${MEDIA_KEY_PREFIX}/${TENANT}/conv_1/msg_1/media.jpg`);
     expect(storage.objects.has(msg.mediaUrl as string)).toBe(true);
     expect(storage.objects.get(msg.mediaUrl as string)?.contentType).toBe('image/jpeg');
   });

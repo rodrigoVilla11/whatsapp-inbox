@@ -3,6 +3,7 @@ import { Logger, NotFoundException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaAccessService } from '../src/media/media-access.service';
+import { MEDIA_KEY_PREFIX } from '../src/media/media-keys';
 import { OutboundMediaService } from '../src/media/outbound-media.service';
 import { RetentionService } from '../src/retention/retention.service';
 import { SendMessageService } from '../src/messaging/send-message.service';
@@ -84,8 +85,8 @@ describe('OutboundMediaService', () => {
       wamid: 'wamid.MEDIA.1',
       body: 'el pedido quedó así',
     });
-    // key = {tenant}/{conv}/{messageId}/{filename sanitizado}
-    expect(msg.mediaUrl).toBe(`${TENANT}/conv_1/${msg.id}/foto_sushi.jpg`);
+    // key = whatsapp-inbox/{tenant}/{conv}/{messageId}/{filename sanitizado}
+    expect(msg.mediaUrl).toBe(`${MEDIA_KEY_PREFIX}/${TENANT}/conv_1/${msg.id}/foto_sushi.jpg`);
     expect(storage.objects.has(msg.mediaUrl as string)).toBe(true);
   });
 

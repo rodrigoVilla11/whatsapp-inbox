@@ -165,12 +165,30 @@ export const useInbox = create<InboxState>()((set, get) => {
 
   /** Resultado del POST de envío → estado. Devuelve true si hubo respuesta del server. */
   function applySendResult(conversationId: string, key: string, result: SendResult): void {
-    if (result.message) putMessage(conversationId, result.message);
+    if (result.message) {
+      putMessage(conversationId, result.message);
+    } else if (result.error) {
+      // Error SIN Message del server (5xx, 413 de multer, 422 de validación):
+      // el mensaje optimista se quedaba PENDING para siempre — "Descargando…"
+      // con reloj y sin salida. Marcarlo FAILED con el motivo es lo que le da
+      // una salida a la cajera.
+      const detail = result.error.message;
+      set((s) => ({
+        messages: {
+          ...s.messages,
+          [conversationId]: (s.messages[conversationId] ?? []).map((m) =>
+            m.clientDedupKey === key
+              ? { ...m, status: 'FAILED' as const, errorDetail: detail, mediaStatus: 'FAILED' }
+              : m,
+          ),
+        },
+      }));
+    }
     set((s) => ({
       outbox: {
         ...s.outbox,
         [key]:
-          result.error && result.message?.status === 'FAILED'
+          result.error && (result.message?.status === 'FAILED' || !result.message)
             ? onDomainFailure(s.outbox[key] ?? startSend(() => key))
             : { clientDedupKey: key, attempts: 1, status: 'sending' },
       },
