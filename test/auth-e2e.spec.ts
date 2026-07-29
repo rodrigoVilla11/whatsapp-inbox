@@ -27,6 +27,7 @@ import { ConversationsService } from '../src/inbox/conversations.service';
 import { AutoReplyService } from '../src/messaging/auto-reply.service';
 import { InboxController } from '../src/inbox/inbox.controller';
 import { QuickRepliesService } from '../src/inbox/quick-replies.service';
+import { TagsService } from '../src/inbox/tags.service';
 import { MediaAccessService } from '../src/media/media-access.service';
 import { MediaController } from '../src/media/media.controller';
 import { OutboundMediaService } from '../src/media/outbound-media.service';
@@ -99,6 +100,7 @@ beforeAll(async () => {
       RolesGuard,
       UsersService,
       ConversationsService,
+      TagsService,
       QuickRepliesService,
       GourmetifyOrdersService, // InboxController lo inyecta (pedidos en el chat)
       {

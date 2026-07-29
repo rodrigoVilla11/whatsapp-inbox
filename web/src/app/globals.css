@@ -25,6 +25,16 @@
   --core-nori: #1f3d2c; /* marca + ventana abierta */
   --core-gari: #c9553b; /* urgencia (exclusivo) */
   --core-piedra: #837d71; /* cerrado / secundario / deshabilitado */
+
+  /* Etiquetas de conversación. Extensión DELIBERADA del núcleo: una
+     etiqueta necesita distinguirse de otra de un vistazo, y con nori +
+     piedra solamente no alcanza. `gari` queda AFUERA a propósito: es
+     urgencia y solo urgencia — una etiqueta roja competiría con "por
+     vencer". Todos son tonos apagados, en familia con la paleta. */
+  --core-shoyu: #6b4423; /* marrón salsa de soja */
+  --core-wasabi: #5f7326; /* verde claro */
+  --core-ume: #8c4358; /* ciruela */
+  --core-ai: #2f4a5c; /* índigo */
 }
 
 @theme inline {
@@ -43,6 +53,21 @@
   --color-gari-ink: color-mix(in oklab, var(--core-gari) 70%, black); /* AA sobre claro */
   --color-piedra-soft: color-mix(in oklab, var(--core-piedra) 15%, var(--core-rice));
   --color-line: color-mix(in oklab, var(--core-sumi) 12%, var(--core-ceramic));
+
+  /* Chips de etiqueta: -soft es el fondo, -ink el texto (AA sobre el soft).
+     Los 6 se derivan igual para que el componente sea un lookup y nada más. */
+  --color-tag-nori-soft: color-mix(in oklab, var(--core-nori) 12%, var(--core-rice));
+  --color-tag-nori-ink: color-mix(in oklab, var(--core-nori) 80%, black);
+  --color-tag-piedra-soft: color-mix(in oklab, var(--core-piedra) 15%, var(--core-rice));
+  --color-tag-piedra-ink: color-mix(in oklab, var(--core-piedra) 75%, black);
+  --color-tag-shoyu-soft: color-mix(in oklab, var(--core-shoyu) 12%, var(--core-rice));
+  --color-tag-shoyu-ink: color-mix(in oklab, var(--core-shoyu) 80%, black);
+  --color-tag-wasabi-soft: color-mix(in oklab, var(--core-wasabi) 14%, var(--core-rice));
+  --color-tag-wasabi-ink: color-mix(in oklab, var(--core-wasabi) 78%, black);
+  --color-tag-ume-soft: color-mix(in oklab, var(--core-ume) 12%, var(--core-rice));
+  --color-tag-ume-ink: color-mix(in oklab, var(--core-ume) 78%, black);
+  --color-tag-ai-soft: color-mix(in oklab, var(--core-ai) 13%, var(--core-rice));
+  --color-tag-ai-ink: color-mix(in oklab, var(--core-ai) 80%, black);
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, 'Cascadia Mono', monospace;

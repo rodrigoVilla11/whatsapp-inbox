@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serializeConversation, serializeMessage } from '../src/common/serializers';
 import { ConversationsService } from '../src/inbox/conversations.service';
 import { QuickRepliesService } from '../src/inbox/quick-replies.service';
+import { TagsService } from '../src/inbox/tags.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import type { GraphApiClient } from '../src/whatsapp/graph-api.client';
 import { createFakeDb, type FakeDb } from './support/fake-db';
@@ -24,7 +25,7 @@ beforeEach(() => {
   graph = { markMessageRead: vi.fn().mockResolvedValue(undefined) };
   events = { publish: vi.fn().mockResolvedValue(undefined) };
   const prisma = { db } as unknown as PrismaService;
-  service = new ConversationsService(prisma, graph as unknown as GraphApiClient, events);
+  service = new ConversationsService(prisma, graph as unknown as GraphApiClient, new TagsService(prisma), events);
   quickReplies = new QuickRepliesService(prisma);
 
   db.tenant.seed({ id: TENANT, slug: 'nova-sushi', name: 'Nova Sushi' });

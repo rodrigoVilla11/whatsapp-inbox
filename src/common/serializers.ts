@@ -77,6 +77,8 @@ export function serializeConversation(
     lastOutboundAt: c.lastOutboundAt,
     lastMessageAt: c.lastMessageAt,
     lastMessagePreview: c.lastMessagePreview,
+    // Anclado compartido: la UI ordena los anclados arriba y muestra el 📌.
+    pinnedAt: c.pinnedAt,
     createdAt: c.createdAt,
     isWindowOpen: isWindowOpen(c),
     windowExpiresAt: windowExpiresAt(c)?.toISOString() ?? null,

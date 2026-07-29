@@ -7,6 +7,7 @@ import { useInbox } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import type { GourmetifyOrder } from '@/lib/types';
 import { usePending } from '@/lib/use-pending';
+import { TagPicker } from './TagPicker';
 
 /** Card de pedido (activo = completa; cerrado = compacta). */
 function OrderCard({ order, compact = false }: { order: GourmetifyOrder; compact?: boolean }) {
@@ -57,8 +58,10 @@ export function ContactPanel({
   const assign = useInbox((s) => s.assign);
   const setStatus = useInbox((s) => s.setConversationStatus);
   const saveContactNotes = useInbox((s) => s.saveContactNotes);
+  const togglePin = useInbox((s) => s.togglePin);
   const assignAction = usePending();
   const statusAction = usePending();
+  const pinAction = usePending();
 
   // Notas con guardado por debounce y confirmación discreta.
   const [notes, setNotes] = useState('');
@@ -176,7 +179,28 @@ export function ContactPanel({
         </div>
       </dl>
 
+      {/* Etiquetas: cualquier agente puede crear y aplicar desde acá */}
+      <TagPicker conversationId={conversation.id} />
+
       <div className="space-y-2">
+        {/* Anclar: compartido, lo ve todo el equipo arriba de la lista */}
+        <button
+          onClick={() => pinAction.run(() => togglePin(conversation.id))}
+          disabled={pinAction.pending}
+          aria-pressed={!!conversation.pinnedAt}
+          className={`min-h-11 w-full rounded-xl border text-sm font-medium disabled:opacity-50 ${
+            conversation.pinnedAt
+              ? 'border-nori bg-nori-soft text-nori'
+              : 'border-line text-sumi/80 hover:bg-ceramic'
+          }`}
+        >
+          {pinAction.pending
+            ? 'Guardando…'
+            : conversation.pinnedAt
+              ? '📌 Anclada arriba — desanclar'
+              : '📌 Anclar arriba'}
+        </button>
+
         {/* Asignación: que dos personas no contesten lo mismo */}
         {me?.userId &&
           (mine ? (

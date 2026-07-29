@@ -62,6 +62,7 @@ model Tenant {
   templates        MessageTemplate[]
   quickReplies     QuickReply[]
   gourmetifyOrders GourmetifyOrder[]
+  tags             Tag[]
 }
 
 model WhatsappAccount {
@@ -185,6 +186,10 @@ model Conversation {
   lastMessageAt      DateTime? // orden del inbox
   lastMessagePreview String?
   unreadCount        Int       @default(0)
+  // Anclado COMPARTIDO por todo el equipo: si la cajera ancla, el dueño
+  // también lo ve arriba. La fecha (y no un boolean) da el orden entre
+  // varios anclados: el último anclado va primero.
+  pinnedAt           DateTime?
   deletedAt          DateTime? // soft delete
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -197,12 +202,15 @@ model Conversation {
   contact         Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
   assignedUser    User?           @relation("AssignedAgent", fields: [assignedUserId], references: [id], onDelete: SetNull)
   messages        Message[]
+  tags            ConversationTag[]
 
   @@unique([tenantId, whatsappAccountId, contactId])
   @@index([tenantId, status, lastMessageAt(sort: Desc)])
   @@index([tenantId, assignedUserId, lastMessageAt(sort: Desc)])
   @@index([tenantId, lastInboundAt])
   @@index([tenantId, orderId])
+  // Los anclados se piden aparte en cada listado: van arriba de todo.
+  @@index([tenantId, pinnedAt(sort: Desc)])
 }
 
 // Pedido de Gourmetify espejado en el inbox (ingesta por webhook, fase
@@ -346,6 +354,48 @@ model QuickReply {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, shortcut])
+}
+
+// Etiquetas de conversación ("mayorista", "reclamo", "sin gluten"). Datos
+// por tenant, igual que las respuestas rápidas: cualquier agente puede
+// crear una al aplicarla desde el chat; renombrar/recolorear/borrar es
+// ADMIN+ desde Ajustes.
+model Tag {
+  id       String @id @default(cuid())
+  tenantId String
+  name     String // como la escribió quien la creó ("Sin Gluten")
+  // Normalizado (minúsculas, sin acentos ni espacios de más): es lo que
+  // hace único a una etiqueta y evita "Mayorista" vs "mayorista".
+  slug     String
+  // Token de color de la paleta de etiquetas (ver web globals.css). NO se
+  // usa `gari`: está reservado a urgencia.
+  color    String @default("piedra")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations ConversationTag[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, name])
+}
+
+// Join explícito (no relación implícita de Prisma) por dos razones: lleva
+// tenantId para que el guard de tenant pueda filtrar sin join, y lleva
+// createdAt para poder mostrar las etiquetas en orden de aplicación.
+model ConversationTag {
+  conversationId String
+  tagId          String
+  tenantId       String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+  @@index([tenantId, tagId])
+  @@index([tenantId, conversationId])
 }
 
 // Auditoría de todo lo que llega al webhook. tenantId nullable: acá cae

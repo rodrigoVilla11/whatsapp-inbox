@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionsService } from '../src/auth/sessions.service';
 import { UsersService } from '../src/auth/users.service';
 import { ConversationsService } from '../src/inbox/conversations.service';
+import { TagsService } from '../src/inbox/tags.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import type { GraphApiClient } from '../src/whatsapp/graph-api.client';
 import { createFakeDb, type FakeDb } from './support/fake-db';
@@ -26,6 +27,7 @@ beforeEach(() => {
   service = new ConversationsService(
     prisma,
     { markMessageRead: vi.fn() } as unknown as GraphApiClient,
+    new TagsService(prisma),
     { publish: vi.fn().mockResolvedValue(undefined) },
   );
   usersService = new UsersService(prisma, new SessionsService(prisma));

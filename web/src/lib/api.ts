@@ -10,6 +10,7 @@ import type {
   Message,
   QuickReply,
   SendResult,
+  Tag,
   Template,
 } from './types';
 
@@ -49,6 +50,10 @@ export const API_ROUTES = {
   contact: (id: string) => `/contacts/${id}`,
   templates: '/templates',
   quickReplies: '/quick-replies',
+  tags: '/tags',
+  tag: (id: string) => `/tags/${id}`,
+  conversationPin: (id: string) => `/conversations/${id}/pin`,
+  conversationTags: (id: string) => `/conversations/${id}/tags`,
   quickReply: (id: string) => `/quick-replies/${id}`,
   messageMedia: (id: string) => `/messages/${id}/media`,
   messageTranscribe: (id: string) => `/messages/${id}/transcribe`,
@@ -166,6 +171,8 @@ export interface ConversationListOptions {
   assignedToMe?: boolean;
   cursor?: string | null;
   q?: string | null;
+  /** Filtro por etiqueta: OR entre las elegidas (CSV en la query). */
+  tagIds?: string[] | null;
 }
 
 /** Pura y exportada: los params del GET /conversations se testean solos. */
@@ -176,6 +183,7 @@ export function conversationQueryParams(options: ConversationListOptions): URLSe
   if (options.cursor) params.set('cursor', options.cursor);
   const q = options.q?.trim();
   if (q) params.set('q', q);
+  if (options.tagIds?.length) params.set('tagIds', options.tagIds.join(','));
   return params;
 }
 
@@ -305,6 +313,45 @@ export const api = {
     deactivate: (id: string) =>
       json<{ ok: true }>(API_ROUTES.quickReply(id), { method: 'DELETE' }),
   },
+
+  /**
+   * Etiquetas. `create` es buscar-o-crear del lado del servidor: mandar una
+   * que ya existe devuelve la existente, no un error — es lo que necesita el
+   * flujo de "la escribo desde el chat".
+   */
+  tags: {
+    // `?? []` y no confiar en la forma: una respuesta sin `tags` resolvería
+    // OK y dejaría `undefined` en el store (el .catch() del caller no salta),
+    // y la lista revienta al renderizar. Mismo criterio que parseSendEnvelope.
+    list: () => json<{ tags: Tag[] }>(API_ROUTES.tags).then((r) => r.tags ?? []),
+    create: (input: { name: string; color?: string }) =>
+      json<{ tag: Tag }>(API_ROUTES.tags, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }).then((r) => r.tag),
+    /** ADMIN+ */
+    update: (id: string, input: { name?: string; color?: string }) =>
+      json<{ tag: Tag }>(API_ROUTES.tag(id), {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      }).then((r) => r.tag),
+    /** ADMIN+ */
+    remove: (id: string) => json<{ ok: true }>(API_ROUTES.tag(id), { method: 'DELETE' }),
+  },
+
+  /** Anclar/desanclar — compartido por el equipo, cualquier rol con sesión. */
+  setPinned: (conversationId: string, pinned: boolean) =>
+    json<{ conversation: Conversation }>(API_ROUTES.conversationPin(conversationId), {
+      method: 'PUT',
+      body: JSON.stringify({ pinned }),
+    }).then((r) => r.conversation),
+
+  /** Reemplaza el juego COMPLETO de etiquetas de la conversación. */
+  setConversationTags: (conversationId: string, tagIds: string[]) =>
+    json<{ tags: Tag[] }>(API_ROUTES.conversationTags(conversationId), {
+      method: 'PUT',
+      body: JSON.stringify({ tagIds }),
+    }).then((r) => r.tags),
 
   /**
    * Envío: el envelope { message, error } llega con CUALQUIER status HTTP —

@@ -163,6 +163,30 @@ export default function InboxSettings() {
         </Link>
       </section>
 
+      {/* Etiquetas: cualquiera las crea desde el chat; acá se ORDENAN (nombre,
+          color, borrado), que es lo que corresponde a ADMIN+. */}
+      {(me?.role === 'ADMIN' || me?.role === 'OWNER') && (
+        <section className="mt-4 rounded-2xl border border-line bg-rice p-2">
+          <h2 className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-piedra">
+            Organización
+          </h2>
+          <Link
+            href="/settings/tags"
+            className="flex min-h-14 items-center justify-between rounded-xl px-3 py-2 hover:bg-ceramic"
+          >
+            <span>
+              <span className="block text-sm font-medium">Etiquetas</span>
+              <span className="block text-xs text-piedra">
+                Renombrar, cambiar color y borrar las que se usan en los chats.
+              </span>
+            </span>
+            <span aria-hidden className="text-piedra">
+              ›
+            </span>
+          </Link>
+        </section>
+      )}
+
       <section className="mt-4 rounded-2xl border border-line bg-rice p-2">
         <h2 className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-piedra">
           Cuenta

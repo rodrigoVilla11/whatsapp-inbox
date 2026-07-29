@@ -37,8 +37,10 @@ import type {
   OrderUpdatedEvent,
   QuickReply,
   SendResult,
+  Tag,
   Template,
 } from './types';
+import { toast } from './toast';
 
 export type ListFilter = 'open' | 'all' | 'mine' | 'closed' | 'unread' | 'expiring';
 
@@ -76,6 +78,10 @@ interface InboxState {
   orders: Record<string, OrdersBundle>;
   templates: Template[];
   quickReplies: QuickReply[];
+  /** Etiquetas del tenant (GET /tags) — selector del panel y chips de filtro. */
+  tags: Tag[];
+  /** Ids de etiqueta por las que se está filtrando la lista (OR entre ellas). */
+  tagFilter: string[];
   /** Estado de envío por mensaje local/real (key = clientDedupKey). */
   outbox: Record<string, OutboxEntry>;
   uploadProgress: Record<string, number>;
@@ -102,6 +108,16 @@ interface InboxState {
   sendTemplate(conversationId: string, templateId: string, params: string[], preview: string): Promise<void>;
   sendMedia(conversationId: string, file: File, caption: string | null): Promise<void>;
   retrySend(message: Message): Promise<void>;
+
+  loadTags(): Promise<void>;
+  /** Prende/apaga una etiqueta del filtro y recarga la lista. */
+  toggleTagFilter(tagId: string): Promise<void>;
+  clearTagFilter(): Promise<void>;
+  togglePin(conversationId: string): Promise<void>;
+  /** Reemplaza el juego completo de etiquetas de la conversación. */
+  setConversationTags(conversationId: string, tagIds: string[]): Promise<void>;
+  /** Crea (o recupera, si ya existía) una etiqueta y la deja en el store. */
+  createTag(name: string, color?: string): Promise<Tag | null>;
 
   markRead(conversationId: string): Promise<void>;
   markUnread(conversationId: string): Promise<void>;
@@ -253,6 +269,8 @@ export const useInbox = create<InboxState>()((set, get) => {
     orders: {},
     templates: [],
     quickReplies: [],
+    tags: [],
+    tagFilter: [],
     outbox: {},
     uploadProgress: {},
     lastError: null,
@@ -271,12 +289,13 @@ export const useInbox = create<InboxState>()((set, get) => {
         });
         return;
       }
-      const [templates, quickReplies, users] = await Promise.all([
+      const [templates, quickReplies, users, tags] = await Promise.all([
         api.listTemplates().catch(() => []),
         api.quickReplies.list().catch(() => []),
         api.listUsers().catch(() => []),
+        api.tags.list().catch(() => []),
       ]);
-      set({ me, timezone: me.timezone, templates, quickReplies, users });
+      set({ me, timezone: me.timezone, templates, quickReplies, users, tags });
       await get().loadConversations();
     },
 
@@ -305,7 +324,7 @@ export const useInbox = create<InboxState>()((set, get) => {
     },
 
     async loadConversations() {
-      const { filter, me, searchQuery } = get();
+      const { filter, me, searchQuery, tagFilter } = get();
       const seq = ++listRequestSeq;
       set({ conversationsLoading: true });
       try {
@@ -313,6 +332,7 @@ export const useInbox = create<InboxState>()((set, get) => {
           filter: apiFilterOf(filter),
           assignedToMe: filter === 'mine' && !!me?.userId,
           q: searchQuery,
+          tagIds: tagFilter,
         });
         if (seq !== listRequestSeq) return; // llegó tarde: hay un fetch más nuevo
         set({
@@ -337,7 +357,7 @@ export const useInbox = create<InboxState>()((set, get) => {
     },
 
     async loadMoreConversations() {
-      const { filter, me, nextCursor, conversations, searchQuery } = get();
+      const { filter, me, nextCursor, conversations, searchQuery, tagFilter } = get();
       if (!nextCursor) return;
       try {
         const result = await api.listConversations({
@@ -345,6 +365,7 @@ export const useInbox = create<InboxState>()((set, get) => {
           assignedToMe: filter === 'mine' && !!me?.userId,
           cursor: nextCursor,
           q: searchQuery,
+          tagIds: tagFilter,
         });
         set({
           conversations: [...conversations, ...result.conversations],
@@ -568,6 +589,93 @@ export const useInbox = create<InboxState>()((set, get) => {
       // envío nuevo por decisión humana (solo texto: media/template se re-eligen)
       if (message.body) {
         await get().sendText(message.conversationId, message.body);
+      }
+    },
+
+    async loadTags() {
+      try {
+        set({ tags: await api.tags.list() });
+      } catch (error) {
+        if (isUnauthorized(error)) return; // redirect en curso
+        // Las etiquetas son accesorias: sin ellas el inbox sigue operando.
+      }
+    },
+
+    async toggleTagFilter(tagId) {
+      const current = get().tagFilter;
+      const next = current.includes(tagId)
+        ? current.filter((id) => id !== tagId)
+        : [...current, tagId];
+      set({ tagFilter: next });
+      await get().loadConversations();
+    },
+
+    async clearTagFilter() {
+      if (get().tagFilter.length === 0) return;
+      set({ tagFilter: [] });
+      await get().loadConversations();
+    },
+
+    async togglePin(conversationId) {
+      const current = get().conversations.find((c) => c.id === conversationId);
+      const pinned = !current?.pinnedAt;
+      try {
+        const conversation = await api.setPinned(conversationId, pinned);
+        set((s) => ({ conversations: upsertConversation(s.conversations, conversation) }));
+        toast(pinned ? 'Conversación anclada arriba' : 'Conversación desanclada');
+      } catch (error) {
+        if (isUnauthorized(error)) return;
+        set({ lastError: 'No pudimos anclar la conversación — reintentá.' });
+      }
+    },
+
+    async setConversationTags(conversationId, tagIds) {
+      // Optimista: los chips responden al toque y el evento WS confirma.
+      const previous = get().conversations.find((c) => c.id === conversationId)?.tags;
+      const chosen = get().tags.filter((t) => tagIds.includes(t.id));
+      set((s) => ({
+        conversations: s.conversations.map((c) =>
+          c.id === conversationId ? { ...c, tags: chosen } : c,
+        ),
+      }));
+      try {
+        const tags = await api.setConversationTags(conversationId, tagIds);
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === conversationId ? { ...c, tags } : c,
+          ),
+        }));
+      } catch (error) {
+        // Revertir: dejar chips que el servidor no aceptó sería mentir.
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === conversationId ? { ...c, tags: previous } : c,
+          ),
+        }));
+        if (isUnauthorized(error)) return;
+        set({
+          lastError:
+            error instanceof Error ? error.message : 'No pudimos guardar las etiquetas.',
+        });
+      }
+    },
+
+    async createTag(name, color) {
+      try {
+        const tag = await api.tags.create({ name, ...(color ? { color } : {}) });
+        // create es buscar-o-crear: si ya existía, no duplicar en el store.
+        set((s) => ({
+          tags: s.tags.some((t) => t.id === tag.id)
+            ? s.tags.map((t) => (t.id === tag.id ? tag : t))
+            : [...s.tags, tag].sort((a, b) => a.name.localeCompare(b.name, 'es')),
+        }));
+        return tag;
+      } catch (error) {
+        if (isUnauthorized(error)) return null;
+        set({
+          lastError: error instanceof Error ? error.message : 'No pudimos crear la etiqueta.',
+        });
+        return null;
       }
     },
 

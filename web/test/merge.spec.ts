@@ -47,6 +47,7 @@ const conv = (over: Partial<Conversation>): Conversation => ({
   lastOutboundAt: null,
   lastMessageAt: '2026-07-25T12:00:00.000Z',
   lastMessagePreview: null,
+  pinnedAt: null,
   createdAt: '2026-07-25T10:00:00.000Z',
   isWindowOpen: true,
   windowExpiresAt: null,

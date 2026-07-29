@@ -57,6 +57,8 @@ export interface Conversation {
   lastOutboundAt: string | null;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;
+  /** Anclado COMPARTIDO por el equipo: null = sin anclar. Ordena arriba de todo. */
+  pinnedAt: string | null;
   createdAt: string;
   /** Calculados por el SERVIDOR — la UI nunca los deriva con su reloj. */
   isWindowOpen: boolean;
@@ -66,6 +68,23 @@ export interface Conversation {
   hasActiveOrder?: boolean;
   /** Número del pedido activo más reciente ("123") — mismo origen que hasActiveOrder. */
   activeOrderNumber?: string | null;
+  /**
+   * Etiquetas aplicadas. Viajan en el listado REST y en el evento de cambio
+   * de etiquetas; el resto de los eventos WS las omiten y el merge preserva
+   * las que ya había (mismo criterio que hasActiveOrder).
+   */
+  tags?: Tag[];
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  /** Normalizado por el servidor: identidad de la etiqueta ("sin-gluten"). */
+  slug: string;
+  /** Token de color; ver web/src/lib/tag-colors.ts. */
+  color: string;
+  /** Solo en GET /tags (Ajustes): cuántas conversaciones la usan. */
+  usageCount?: number;
 }
 
 export interface Template {

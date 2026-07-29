@@ -43,11 +43,6 @@ opere hoy. El orden es una sugerencia de prioridad para cuando toque.
   Requeriría: canal WS de presencia efímera (typing con TTL en Redis),
   throttling de eventos y UI en lista + hilo.
 
-- **Etiquetas de conversación** — sin volumen real todavía no se sabe qué
-  etiquetas sirven (¿pedido? ¿reclamo? ¿mayorista?). Requeriría: modelo
-  `Tag` + M2M con tenant scoping, CRUD en ajustes, chips en fila/hilo y
-  filtro por etiqueta en la lista.
-
 - **Snooze / recordatorios** — pospone conversaciones ("recordame a las 19");
   útil pero pide infraestructura de jobs con hora local del tenant.
   Requeriría: campo `snoozedUntil`, un scheduler (el worker ya existe, falta

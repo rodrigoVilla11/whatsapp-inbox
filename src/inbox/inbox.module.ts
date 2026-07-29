@@ -5,13 +5,14 @@ import { MessagingModule } from '../messaging/messaging.module';
 import { ConversationsService } from './conversations.service';
 import { InboxController } from './inbox.controller';
 import { QuickRepliesService } from './quick-replies.service';
+import { TagsService } from './tags.service';
 
 @Module({
   // MessagingModule: GraphApiClient (mark-read best-effort).
   // GourmetifyModule: lectura de pedidos con sesión.
   imports: [MessagingModule, GourmetifyModule],
   controllers: [InboxController],
-  providers: [ConversationsService, QuickRepliesService],
+  providers: [ConversationsService, QuickRepliesService, TagsService],
 })
 export class InboxModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

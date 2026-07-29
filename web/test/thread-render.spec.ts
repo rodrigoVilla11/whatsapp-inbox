@@ -28,6 +28,7 @@ const conversationFixture: Conversation = {
   lastOutboundAt: null,
   lastMessageAt: new Date().toISOString(),
   lastMessagePreview: 'hola',
+  pinnedAt: null,
   createdAt: new Date().toISOString(),
   isWindowOpen: true,
   windowExpiresAt: new Date(Date.now() + 20 * 3600 * 1000).toISOString(),

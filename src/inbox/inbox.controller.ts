@@ -21,6 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getTenantContext } from '../tenant/tenant-context';
 import { ConversationListFilter, ConversationsService } from './conversations.service';
 import { QuickRepliesService } from './quick-replies.service';
+import { TagsService } from './tags.service';
 
 /**
  * Endpoints REST del inbox — sesión obligatoria (SessionAuthMiddleware en
@@ -32,6 +33,7 @@ import { QuickRepliesService } from './quick-replies.service';
 export class InboxController {
   constructor(
     private readonly conversations: ConversationsService,
+    private readonly tags: TagsService,
     private readonly quickReplies: QuickRepliesService,
     private readonly orders: GourmetifyOrdersService,
     private readonly autoReply: AutoReplyService,
@@ -71,6 +73,7 @@ export class InboxController {
     @Query('assignedToMe') assignedToMe?: string,
     @Query('cursor') cursor?: string,
     @Query('q') q?: string,
+    @Query('tagIds') tagIds?: string,
   ): Promise<unknown> {
     const { tenantId, userId } = getTenantContext(req);
     const filter: ConversationListFilter =
@@ -82,6 +85,9 @@ export class InboxController {
       assignedToMe: assignedToMe === 'true',
       cursor,
       q,
+      // CSV en la query (?tagIds=a,b): el filtro va en la URL y por lo tanto
+      // sobrevive un refresh, igual que el resto de los filtros de la lista.
+      tagIds: tagIds ? tagIds.split(',').filter(Boolean) : undefined,
     });
   }
 
@@ -133,6 +139,74 @@ export class InboxController {
   async markRead(@Param('id') conversationId: string, @Req() req: Request): Promise<unknown> {
     const { tenantId } = getTenantContext(req);
     return { conversation: await this.conversations.markRead(tenantId, conversationId) };
+  }
+
+  /**
+   * Anclar arriba de todo. Compartido por el equipo, así que cualquier rol
+   * con sesión puede hacerlo — igual que asignar o cerrar.
+   */
+  @Put('conversations/:id/pin')
+  async setPinned(
+    @Param('id') conversationId: string,
+    @Body() body: { pinned?: unknown },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    if (typeof body?.pinned !== 'boolean') {
+      throw new BadRequestException('pinned debe ser true o false');
+    }
+    return {
+      conversation: await this.conversations.setPinned(tenantId, conversationId, body.pinned),
+    };
+  }
+
+  /** Reemplaza las etiquetas de la conversación (estado final, idempotente). */
+  @Put('conversations/:id/tags')
+  async setConversationTags(
+    @Param('id') conversationId: string,
+    @Body() body: { tagIds?: unknown },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return this.conversations.setTags(tenantId, conversationId, body?.tagIds ?? []);
+  }
+
+  // ── Etiquetas del tenant ───────────────────────────────────────────────
+  // Crear es de CUALQUIER rol (se etiqueta desde el chat, en el mostrador);
+  // renombrar/recolorear/borrar es ADMIN+ desde Ajustes.
+
+  @Get('tags')
+  async listTags(@Req() req: Request): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return { tags: await this.tags.list(tenantId) };
+  }
+
+  @Post('tags')
+  async createTag(
+    @Body() body: { name?: unknown; color?: unknown },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return { tag: await this.tags.create(tenantId, body ?? {}) };
+  }
+
+  @Patch('tags/:id')
+  @MinRole('ADMIN')
+  async updateTag(
+    @Param('id') id: string,
+    @Body() body: { name?: unknown; color?: unknown },
+    @Req() req: Request,
+  ): Promise<unknown> {
+    const { tenantId } = getTenantContext(req);
+    return { tag: await this.tags.update(tenantId, id, body ?? {}) };
+  }
+
+  @Delete('tags/:id')
+  @MinRole('ADMIN')
+  async deleteTag(@Param('id') id: string, @Req() req: Request): Promise<{ ok: true }> {
+    const { tenantId } = getTenantContext(req);
+    await this.tags.remove(tenantId, id);
+    return { ok: true };
   }
 
   /** "Vuelvo a esto después": deja la conversación como no leída. */

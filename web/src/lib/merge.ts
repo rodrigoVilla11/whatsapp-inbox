@@ -54,6 +54,18 @@ export function applyMessageChanges(
 }
 
 function conversationOrder(a: Conversation, b: Conversation): number {
+  // Los ANCLADOS van arriba de todo (mismo criterio que el listado del
+  // servidor). Sin esto, un conversation.updated por WS reordenaría por
+  // fecha y el anclado se caería de la punta.
+  const pa = a.pinnedAt ? Date.parse(a.pinnedAt) : null;
+  const pb = b.pinnedAt ? Date.parse(b.pinnedAt) : null;
+  if (pa !== null || pb !== null) {
+    if (pa === null) return 1;
+    if (pb === null) return -1;
+    if (pa !== pb) return pb - pa; // el último anclado, primero
+    return a.id < b.id ? 1 : -1;
+  }
+
   const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : null;
   const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : null;
   if (ta === null && tb === null) return a.id < b.id ? 1 : -1;
@@ -80,6 +92,9 @@ export function upsertConversation(list: Conversation[], incoming: Conversation)
     // eventos WS no los traen y no deben apagarlos.
     hasActiveOrder: incoming.hasActiveOrder ?? existing?.hasActiveOrder,
     activeOrderNumber: incoming.activeOrderNumber ?? existing?.activeOrderNumber,
+    // Igual con las etiquetas: solo el evento de cambio de etiquetas las
+    // trae. Un assign o un mark-read no debe vaciar los chips de la fila.
+    tags: incoming.tags ?? existing?.tags,
   };
   const rest = list.filter((c) => c.id !== incoming.id);
   return sortConversations([...rest, merged]);

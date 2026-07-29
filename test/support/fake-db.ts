@@ -71,21 +71,37 @@ function matchOperator(rowValue: unknown, op: Record<string, unknown>): boolean 
   return true;
 }
 
-export function matchWhere(row: Row, where: Row | undefined): boolean {
+/**
+ * Filtro de RELACIÓN (`tags: { some: {...} }`): el fake no conoce el grafo,
+ * así que cada modelo declara cómo resolver los suyos con setRelation(). Se
+ * pasa por toda la recursión porque en la práctica aparecen dentro de un OR
+ * (la búsqueda matchea "por contacto O por etiqueta").
+ */
+export type RelationMatcher = (row: Row, condition: unknown) => boolean;
+
+export function matchWhere(
+  row: Row,
+  where: Row | undefined,
+  relations: Record<string, RelationMatcher> = {},
+): boolean {
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
     if (key === 'OR') {
-      if (!(cond as Row[]).some((w) => matchWhere(row, w))) return false;
+      if (!(cond as Row[]).some((w) => matchWhere(row, w, relations))) return false;
       continue;
     }
     if (key === 'AND') {
       const branches = Array.isArray(cond) ? cond : [cond];
-      if (!branches.every((w) => matchWhere(row, w as Row))) return false;
+      if (!branches.every((w) => matchWhere(row, w as Row, relations))) return false;
       continue;
     }
     if (key === 'NOT') {
       const branches = Array.isArray(cond) ? cond : [cond];
-      if (branches.some((w) => matchWhere(row, w as Row))) return false;
+      if (branches.some((w) => matchWhere(row, w as Row, relations))) return false;
+      continue;
+    }
+    if (relations[key]) {
+      if (!relations[key](row, cond)) return false;
       continue;
     }
     if (cond === null) {
@@ -125,12 +141,42 @@ function applyData(row: Row, data: Row): void {
 export class FakeModel {
   rows: Row[] = [];
   private seq = 0;
+  private relations: Record<string, RelationMatcher> = {};
+  private includes: Record<string, (row: Row) => Row | null> = {};
 
   constructor(
     private readonly name: string,
     private readonly defaults: Row = {},
     private readonly uniques: string[][] = [],
   ) {}
+
+  /** Declara cómo se evalúa un filtro de relación (`tags: { some: … }`). */
+  setRelation(field: string, matcher: RelationMatcher): this {
+    this.relations[field] = matcher;
+    return this;
+  }
+
+  /** Declara cómo se resuelve un `include: { tag: true }`. */
+  setInclude(field: string, resolve: (row: Row) => Row | null): this {
+    this.includes[field] = resolve;
+    return this;
+  }
+
+  private matches(row: Row, where: Row | undefined): boolean {
+    return matchWhere(row, where, this.relations);
+  }
+
+  private withIncludes(row: Row, include: Row | undefined): Row {
+    if (!include) return { ...row };
+    const out: Row = { ...row };
+    for (const [field, wanted] of Object.entries(include)) {
+      if (wanted && this.includes[field]) {
+        const related = this.includes[field](row);
+        out[field] = related ? { ...related } : null;
+      }
+    }
+    return out;
+  }
 
   seed(row: Row): Row {
     const full = { id: `${this.name}_${++this.seq}`, ...this.defaults, ...row };
@@ -176,7 +222,7 @@ export class FakeModel {
   }
 
   findFirst({ where }: { where?: Row } = {}): Row | null {
-    const row = this.rows.find((r) => matchWhere(r, where));
+    const row = this.rows.find((r) => this.matches(r, where));
     return row ? { ...row } : null;
   }
 
@@ -184,8 +230,16 @@ export class FakeModel {
     where,
     orderBy,
     take,
-  }: { where?: Row; orderBy?: Row | Row[]; take?: number } = {}): Row[] {
-    let rows = this.rows.filter((r) => matchWhere(r, where));
+    include,
+    select,
+  }: {
+    where?: Row;
+    orderBy?: Row | Row[];
+    take?: number;
+    include?: Row;
+    select?: Row;
+  } = {}): Row[] {
+    let rows = this.rows.filter((r) => this.matches(r, where));
     if (orderBy) {
       const specs = (Array.isArray(orderBy) ? orderBy : [orderBy]).flatMap((o) =>
         Object.entries(o).map(([field, dir]) => {
@@ -214,11 +268,40 @@ export class FakeModel {
       });
     }
     if (take !== undefined) rows = rows.slice(0, take);
-    return rows.map((r) => ({ ...r }));
+    return rows.map((r) => {
+      const withRelations = this.withIncludes(r, include);
+      if (!select) return withRelations;
+      // `select` en Prisma devuelve SOLO los campos pedidos.
+      return Object.fromEntries(
+        Object.keys(select)
+          .filter((k) => select[k])
+          .map((k) => [k, withRelations[k]]),
+      );
+    });
+  }
+
+  /** Subset de groupBy: by (campos) + _count._all. Es lo que usa el dominio. */
+  groupBy({
+    by,
+    where,
+  }: {
+    by: string[];
+    where?: Row;
+    _count?: unknown;
+  }): Array<Row & { _count: { _all: number } }> {
+    const buckets = new Map<string, { key: Row; count: number }>();
+    for (const row of this.rows.filter((r) => this.matches(r, where))) {
+      const key = Object.fromEntries(by.map((f) => [f, row[f]]));
+      const hash = JSON.stringify(by.map((f) => row[f]));
+      const bucket = buckets.get(hash) ?? { key, count: 0 };
+      bucket.count += 1;
+      buckets.set(hash, bucket);
+    }
+    return [...buckets.values()].map((b) => ({ ...b.key, _count: { _all: b.count } }));
   }
 
   update({ where, data }: { where: Row; data: Row }): Row {
-    const row = this.rows.find((r) => matchWhere(r, where));
+    const row = this.rows.find((r) => this.matches(r, where));
     if (!row) {
       const error = new Error('Record not found') as Error & { code: string };
       error.code = 'P2025';
@@ -230,13 +313,13 @@ export class FakeModel {
   }
 
   updateMany({ where, data }: { where?: Row; data: Row }): { count: number } {
-    const matched = this.rows.filter((r) => matchWhere(r, where));
+    const matched = this.rows.filter((r) => this.matches(r, where));
     for (const row of matched) applyData(row, data);
     return { count: matched.length };
   }
 
   upsert({ where, create, update }: { where: Row; create: Row; update: Row }): Row {
-    const existing = this.rows.find((r) => matchWhere(r, where));
+    const existing = this.rows.find((r) => this.matches(r, where));
     if (existing) {
       applyData(existing, update);
       return { ...existing };
@@ -245,7 +328,7 @@ export class FakeModel {
   }
 
   deleteMany({ where }: { where?: Row } = {}): { count: number } {
-    const keep = this.rows.filter((r) => !matchWhere(r, where));
+    const keep = this.rows.filter((r) => !this.matches(r, where));
     const count = this.rows.length - keep.length;
     this.rows = keep;
     return { count };
@@ -265,7 +348,11 @@ export interface FakeDb {
   messageTemplate: FakeModel;
   quickReply: FakeModel;
   gourmetifyOrder: FakeModel;
+  tag: FakeModel;
+  conversationTag: FakeModel;
+  // Las dos formas de Prisma: callback (interactive) y array (batch).
   $transaction<T>(fn: (tx: FakeDb) => Promise<T>): Promise<T>;
+  $transaction<T>(operations: T[]): Promise<T[]>;
 }
 
 export function createFakeDb(): FakeDb {
@@ -317,6 +404,7 @@ export function createFakeDb(): FakeDb {
         lastMessageAt: null,
         lastMessagePreview: null,
         unreadCount: 0,
+        pinnedAt: null,
         orderId: null,
         deletedAt: null,
       },
@@ -372,7 +460,28 @@ export function createFakeDb(): FakeDb {
       },
       [['tenantId', 'gourmetifyOrderId']],
     ),
-    $transaction: async (fn) => fn(db),
+    tag: new FakeModel('tag', { color: 'piedra' }, [['tenantId', 'slug']]),
+    // El @@id([conversationId, tagId]) del schema funciona como unique.
+    conversationTag: new FakeModel('convtag', {}, [['conversationId', 'tagId']]),
+    $transaction: (async (arg: unknown) =>
+      // Forma array: en el fake las operaciones ya se ejecutaron al armar el
+      // array (son sincrónicas), así que solo hay que resolverlas.
+      Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: FakeDb) => Promise<unknown>)(db)) as FakeDb['$transaction'],
   };
+
+  // Relaciones que el dominio consulta: filtro `tags: { some: … }` sobre
+  // conversaciones, y `include: { tag: true }` sobre el join.
+  db.conversation.setRelation('tags', (row, condition) => {
+    const some = (condition as { some?: Row } | null)?.some;
+    if (!some) return true;
+    return db.conversationTag.rows.some(
+      (ct) => ct.conversationId === row.id && matchWhere(ct, some),
+    );
+  });
+  db.conversationTag.setInclude(
+    'tag',
+    (row) => db.tag.rows.find((t) => t.id === row.tagId) ?? null,
+  );
+
   return db;
 }

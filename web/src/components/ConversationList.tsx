@@ -7,6 +7,7 @@ import { formatTime, initialOf, relativeListTime } from '@/lib/format';
 import { type ListFilter, useInbox } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import type { Conversation } from '@/lib/types';
+import { TagChip } from './TagChip';
 import { useNow } from '@/lib/use-now';
 import { formatCountdown, windowView } from '@/lib/window-ui';
 import { ListSkeleton } from './Skeletons';
@@ -101,6 +102,10 @@ export function ConversationList({
   const nextCursor = useInbox((s) => s.nextCursor);
   const loadMore = useInbox((s) => s.loadMoreConversations);
   const setStatus = useInbox((s) => s.setConversationStatus);
+  const tags = useInbox((s) => s.tags);
+  const tagFilter = useInbox((s) => s.tagFilter);
+  const toggleTagFilter = useInbox((s) => s.toggleTagFilter);
+  const clearTagFilter = useInbox((s) => s.clearTagFilter);
   const drafts = useDrafts((s) => s.drafts);
 
   // Reloj de la lista, seguro para hydration: null en SSR/primer paint
@@ -175,13 +180,39 @@ export function ConversationList({
           type="search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Buscar por nombre o teléfono"
+          placeholder="Buscar por nombre, teléfono o etiqueta"
           className="mb-2 min-h-11 w-full rounded-xl border border-line bg-rice px-3 text-sm placeholder:text-piedra"
         />
 
+        {/* Filtro por etiqueta: es OTRA dimensión que los tabs de estado, así
+            que va en su propia fila y se combina con el tab activo. */}
+        {tags.length > 0 && (
+          <div className="mb-2 flex items-center gap-1.5 overflow-x-auto">
+            <span className="sr-only">Filtrar por etiqueta</span>
+            {tags.map((tag) => (
+              <TagChip
+                key={tag.id}
+                tag={tag}
+                active={tagFilter.includes(tag.id)}
+                onClick={() => void toggleTagFilter(tag.id)}
+                className="shrink-0"
+              />
+            ))}
+            {tagFilter.length > 0 && (
+              <button
+                onClick={() => void clearTagFilter()}
+                className="min-h-8 shrink-0 rounded-full px-2 text-[11px] font-medium text-piedra hover:bg-ceramic"
+              >
+                Quitar filtro
+              </button>
+            )}
+          </div>
+        )}
+
         {searching ? (
           <p className="px-1 text-xs text-piedra">
-            Buscando en todas las conversaciones, cerradas incluidas.
+            Buscando por nombre, teléfono y etiqueta en todas las conversaciones, cerradas
+            incluidas.
           </p>
         ) : (
           <div
@@ -268,7 +299,18 @@ export function ConversationList({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline justify-between gap-2">
-                    <span className="truncate font-semibold">{name}</span>
+                    <span className="min-w-0 truncate font-semibold">
+                      {c.pinnedAt && (
+                        <span
+                          aria-label="Anclada arriba"
+                          title="Anclada arriba"
+                          className="mr-1 text-[11px]"
+                        >
+                          📌
+                        </span>
+                      )}
+                      {name}
+                    </span>
                     {c.lastMessageAt && (
                       <span className="tnum shrink-0 font-mono text-xs text-piedra">
                         {nowDate
@@ -296,6 +338,15 @@ export function ConversationList({
                       </span>
                     )}
                   </span>
+                  {/* Etiquetas: fila propia para no competir con la ventana y
+                      el pedido, que son la información operativa urgente. */}
+                  {c.tags && c.tags.length > 0 && (
+                    <span className="mt-1 flex flex-wrap items-center gap-1">
+                      {c.tags.map((tag) => (
+                        <TagChip key={tag.id} tag={tag} />
+                      ))}
+                    </span>
+                  )}
                   <span className="mt-1 flex items-center gap-1.5">
                     <WindowChip conversation={c} now={now} />
                     {c.hasActiveOrder && (
