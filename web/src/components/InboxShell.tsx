@@ -3,6 +3,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useDrafts } from '@/lib/drafts';
+import { useLightbox } from '@/lib/lightbox';
 import { initNotifications } from '@/lib/notify';
 import { usePrefs } from '@/lib/prefs';
 import { connectInboxSocket } from '@/lib/socket';
@@ -11,6 +12,7 @@ import { ChangePasswordGate } from './ChangePasswordGate';
 import { ConnectionBadge } from './ConnectionBadge';
 import { ContactPanel } from './ContactPanel';
 import { ConversationList } from './ConversationList';
+import { Lightbox } from './Lightbox';
 import { ShortcutHelp } from './ShortcutHelp';
 import { Thread } from './Thread';
 import { Toasts } from './Toasts';
@@ -36,6 +38,9 @@ export function InboxShell() {
   // Cursor de teclado sobre la lista (↑/↓ marca, Enter abre) + ayuda "?"
   const [cursorId, setCursorId] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  // Visor de imagen: vive en su propio store porque lo abre MessageBubble.
+  const lightboxImage = useLightbox((s) => s.image);
+  const closeLightbox = useLightbox((s) => s.close);
   // Panorámica: la lista toma toda la pantalla para barrer muchos chats de un
   // vistazo. Es momentánea a propósito (no es preferencia de dispositivo):
   // elegir una conversación devuelve el layout de 3 columnas.
@@ -85,6 +90,11 @@ export function InboxShell() {
       const typing = !!target?.closest('input, textarea, select, [contenteditable="true"]');
 
       if (e.key === 'Escape') {
+        // El visor de imagen es lo que está más arriba: cierra primero.
+        if (lightboxImage) {
+          closeLightbox();
+          return;
+        }
         if (showHelp) {
           setShowHelp(false);
           return;
@@ -98,6 +108,9 @@ export function InboxShell() {
         return;
       }
       if (typing) return;
+      // Con el visor abierto sólo responde Esc: ↑/↓ o Enter no deben mover
+      // la lista que quedó por debajo.
+      if (lightboxImage) return;
 
       if (e.key === '?') {
         e.preventDefault();
@@ -127,7 +140,16 @@ export function InboxShell() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [conversations, cursorId, selectedId, showHelp, listExpanded, router]);
+  }, [
+    conversations,
+    cursorId,
+    selectedId,
+    showHelp,
+    listExpanded,
+    router,
+    lightboxImage,
+    closeLightbox,
+  ]);
 
   // Password provisoria: no hay inbox hasta elegir la definitiva.
   if (mustChangePassword) return <ChangePasswordGate />;
@@ -192,6 +214,7 @@ export function InboxShell() {
       </div>
 
       <Toasts />
+      <Lightbox />
       {showHelp && <ShortcutHelp onClose={() => setShowHelp(false)} />}
     </div>
   );

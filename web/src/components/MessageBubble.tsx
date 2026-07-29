@@ -2,6 +2,7 @@
 
 import { api } from '@/lib/api';
 import { formatBytes, formatTime } from '@/lib/format';
+import { useLightbox } from '@/lib/lightbox';
 import { useInbox } from '@/lib/store';
 import { toast } from '@/lib/toast';
 import type { Message } from '@/lib/types';
@@ -90,6 +91,8 @@ function Ticks({ message }: { message: Message }) {
 }
 
 function Media({ message, outbound }: { message: Message; outbound: boolean }) {
+  const openLightbox = useLightbox((s) => s.open);
+
   if (message.mediaStatus === 'PENDING') {
     return (
       <div className="flex h-32 w-48 animate-pulse items-center justify-center rounded-xl bg-piedra-soft text-xs text-piedra">
@@ -107,14 +110,23 @@ function Media({ message, outbound }: { message: Message; outbound: boolean }) {
   }
   const url = api.mediaUrl(message.id); // 302 → URL firmada; el tag sigue el redirect
   if (message.type === 'IMAGE' || message.type === 'STICKER') {
+    // El caption sirve de alt cuando lo hay; si no, al menos la dirección.
+    const alt = message.body ?? (outbound ? 'Imagen enviada' : 'Imagen recibida');
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={url}
-        alt={message.body ?? 'Imagen recibida'}
-        className="max-h-64 max-w-full rounded-xl object-cover"
-        loading="lazy"
-      />
+      <button
+        type="button"
+        onClick={() => openLightbox({ url, alt, filename: message.mediaFilename ?? null })}
+        aria-label={`Ver más grande: ${alt}`}
+        className="block cursor-zoom-in rounded-xl"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={alt}
+          className="max-h-64 max-w-full rounded-xl object-cover"
+          loading="lazy"
+        />
+      </button>
     );
   }
   if (message.type === 'AUDIO') {
